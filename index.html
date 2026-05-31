@@ -37,7 +37,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>ShotClock</title>
 <meta name="description" content="Billiards shot-pace timer">
 <script src="version.js"></script>
@@ -67,7 +67,9 @@
   .header {
     background: linear-gradient(135deg, var(--spm-primary), var(--spm-accent));
     color: #fff;
-    padding: 12px 16px;
+    /* Add Dynamic Island / notch buffer via safe-area-inset (iPhone 14/15/16/17,
+       Z Fold 7 outer punch-hole). Without viewport-fit=cover this would be 0. */
+    padding: calc(12px + env(safe-area-inset-top)) calc(16px + env(safe-area-inset-right)) 12px calc(16px + env(safe-area-inset-left));
     text-align: center;
     box-shadow: 0 2px 8px rgba(0,0,0,0.15);
   }
@@ -199,7 +201,9 @@
     position: fixed; bottom: 0; left: 0; right: 0;
     background: var(--card);
     border-top: 1px solid var(--border);
-    padding: 10px 12px 18px;
+    /* Home-indicator clearance via env() — iPhone notched models have
+       ~34px inset at bottom; non-notched iPhones + Android get 0. */
+    padding: 10px calc(12px + env(safe-area-inset-right)) calc(18px + env(safe-area-inset-bottom)) calc(12px + env(safe-area-inset-left));
     box-shadow: 0 -2px 10px rgba(0,0,0,0.06);
     z-index: 50;
   }
@@ -236,11 +240,139 @@
     font-size: 0.68rem; color: var(--muted);
   }
 
-  /* very narrow screens — keep side-by-side but tighten */
+  /* ──────────────────────────────────────────────────────────────────
+     RESPONSIVE TIERS (2026 best practice: viewport-/feature-based, not
+     UA-detected — Samsung Internet and iOS Safari both spoof UA strings,
+     so device names lie. Tiers below target physical device classes by
+     the dimensional fingerprint they ACTUALLY present to CSS.)
+     ────────────────────────────────────────────────────────────────── */
+
+  /* TIER · Very narrow phones (iPhone SE, Z Fold 7 cover when folded
+     ~6.5" tall narrow, base case for the smallest iPhones in service). */
   @media (max-width: 360px) {
     .players-row { gap: 4px; padding: 6px; }
     .player { padding: 8px; }
     .btn-primary { font-size: 1rem; padding: 16px; }
+  }
+
+  /* TIER · Plus / Pro Max iPhones (iPhone 16 Pro Max, iPhone 17 Pro Max
+     — 6.7-6.9" portrait, Dynamic-Island devices). Apple HIG explicitly
+     recommends LARGER typography on these models — extra real estate
+     should buy readability, not just more whitespace. */
+  @media (min-width: 412px) and (orientation: portrait) {
+    .header h1 { font-size: 1.3rem; }
+    .header .sub { font-size: 0.78rem; }
+    .player-name { font-size: 1.1rem; }
+    .player-meta { font-size: 0.78rem; }
+    .live-row { height: 32px; font-size: 1.15rem; }
+    .shot-list { max-height: 160px; }
+    .shot-list li { font-size: 0.85rem; padding: 5px 4px; }
+    .histogram { height: 70px; }
+    .btn-primary { padding: 22px; font-size: 1.2rem; }
+    .btn-secondary { padding: 14px; font-size: 0.95rem; }
+  }
+
+  /* TIER · Foldable unfolded — Galaxy Z Fold 7 inner screen (~8.0", aspect
+     close to 1:1). Detect by aspect ratio + width threshold. Also pairs
+     with the Device Posture media query (newer, narrower browser support).
+     Layout strategy: massive horizontal space → give each player a full
+     column with shot history NEVER truncated, controls flank center. */
+  @media (min-width: 700px) and (min-aspect-ratio: 4/5),
+         (spanning: single-fold-vertical) {
+    body { padding-bottom: 0; }
+    .players-row {
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+      padding: 20px;
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+    .player { padding: 20px; }
+    .player-name { font-size: 1.4rem; }
+    .player-meta { font-size: 0.9rem; }
+    .live-row { font-size: 1.6rem; height: 44px; }
+    .shot-list { max-height: 320px; }  /* much taller — fold has the vertical space */
+    .shot-list li { font-size: 0.95rem; padding: 7px 6px; }
+    .histogram { height: 100px; }
+    .hist-labels { font-size: 0.68rem; }
+    /* Bring the controls inline (not fixed at bottom) on the unfolded
+       layout — there's room to spare. */
+    .controls {
+      position: static;
+      max-width: 1200px;
+      margin: 0 auto 20px;
+      border-top: 0;
+      box-shadow: none;
+      padding-bottom: 20px;
+    }
+    .btn-primary { padding: 24px; font-size: 1.3rem; }
+  }
+
+  /* TIER · Landscape phone (any iPhone or Galaxy rotated). Cap height
+     means we have to compress vertically — move controls to the right
+     edge so the player columns get the full viewport height. */
+  @media (orientation: landscape) and (max-height: 500px) {
+    body { padding-bottom: 0; }
+    .header { padding-top: calc(6px + env(safe-area-inset-top)); padding-bottom: 6px; }
+    .header h1 { font-size: 0.95rem; }
+    .header .sub { display: none; }
+    .top-bar { padding: 4px 12px; }
+    .players-row {
+      grid-template-columns: 1fr 1fr 180px;  /* controls become a third column */
+      gap: 6px; padding: 6px;
+    }
+    .shot-list { max-height: 80px; }
+    .histogram { height: 50px; }
+    .controls {
+      position: static;
+      grid-column: 3;
+      grid-row: 1;
+      border-top: 0; box-shadow: none;
+      padding: 0;
+      display: flex; flex-direction: column; gap: 6px;
+    }
+    .btn-primary { padding: 14px; font-size: 0.95rem; }
+    .btn-row { grid-template-columns: 1fr; gap: 6px; margin-top: 0; }
+  }
+
+  /* TIER · Pointer device (Z Fold 7 with DeX, iPhone via cursor in
+     accessibility mode, any browser open on desktop for testing).
+     Hover states give cursor users feedback that touch users don't
+     need or want. */
+  @media (hover: hover) and (pointer: fine) {
+    .btn-primary:hover { filter: brightness(1.08); }
+    .btn-secondary:hover { background: var(--bg); }
+    .player:hover:not(.active) { border-color: #cbd5e1; cursor: pointer; }
+    .undo-shot:hover, .expand-toggle:hover { color: var(--spm-accent); }
+  }
+
+  /* TIER · Dark mode (system-level, both iOS and Android One UI honor it).
+     Invert the canvas while keeping the SPM gradient + accent for brand
+     continuity. Histogram colors stay vivid against the dark canvas. */
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg:     #0f1115;
+      --card:   #1c1f26;
+      --text:   #e5e7eb;
+      --muted:  #9ca3af;
+      --border: #2a2f3a;
+    }
+    .header { box-shadow: 0 2px 8px rgba(0,0,0,0.5); }
+    .player-name:focus { background: #232838; }
+    .source-btn:hover { background: #1f2433; }
+    .btn-secondary { background: var(--card); }
+    .undo-shot, .expand-toggle { color: #9ca3af; }
+  }
+
+  /* TIER · Reduce motion (iOS Settings → Accessibility → Motion → Reduce
+     Motion; Android Settings → Accessibility → Remove animations). Honor
+     it by killing every transition so transitions don't lag or distract
+     users who explicitly asked for stillness. */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      transition: none !important;
+      animation: none !important;
+    }
   }
 </style>
 </head>
@@ -576,7 +708,16 @@ setInterval(() => {
 }, TICK_MS);
 
 /* ────── Event wiring ────── */
+/* Haptic-tap helper: short vibration on the primary action button to
+   confirm shot start/end. iOS Safari silently ignores navigator.vibrate
+   (Apple policy), so this is Android-only by browser-design — no UA sniff
+   needed. Pause/Turn-Over are softer events, no haptic. */
+function haptic() {
+  if (navigator.vibrate) try { navigator.vibrate(15); } catch (_) {}
+}
+
 document.getElementById('primaryBtn').addEventListener('click', () => {
+  haptic();
   if (!state.currentShot) startShot();
   else if (shotPaused()) endShot();   /* end while paused — record current elapsed */
   else endShot();
