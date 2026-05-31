@@ -374,6 +374,93 @@
       animation: none !important;
     }
   }
+
+  /* ──────────────────────────────────────────────────────────────────
+     HISTORY MODAL — list of archived matches with expandable details.
+     ────────────────────────────────────────────────────────────────── */
+  .modal-backdrop {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.55);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 100;
+    padding: 16px;
+    overflow-y: auto;
+  }
+  .modal-backdrop[hidden] { display: none; }
+  .modal-box {
+    background: var(--card); color: var(--text);
+    border-radius: var(--radius);
+    padding: 18px 16px 16px;
+    max-width: 600px; width: 100%;
+    max-height: 92vh; overflow-y: auto;
+    position: relative;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+  }
+  .modal-close {
+    position: absolute; top: 6px; right: 8px;
+    background: none; border: 0;
+    font-size: 1.8rem; line-height: 1;
+    color: var(--muted); cursor: pointer; padding: 4px 10px;
+  }
+  .modal-title {
+    font-size: 1.1rem; font-weight: 800;
+    color: var(--spm-accent);
+    margin-bottom: 12px;
+  }
+  .history-empty {
+    color: var(--muted); font-style: italic;
+    text-align: center; padding: 24px 0;
+  }
+  .history-item {
+    border: 1px solid var(--border); border-radius: 8px;
+    padding: 10px; margin-bottom: 8px;
+  }
+  .history-item-head {
+    display: flex; justify-content: space-between; align-items: center;
+    gap: 8px; cursor: pointer;
+  }
+  .history-when { font-size: 0.78rem; color: var(--muted); font-weight: 600; }
+  .history-summary {
+    margin-top: 4px;
+    display: grid; grid-template-columns: 1fr 1fr;
+    gap: 6px;
+    font-size: 0.85rem;
+  }
+  .history-summary .p {
+    background: var(--bg); padding: 6px 8px; border-radius: 6px;
+    font-variant-numeric: tabular-nums;
+  }
+  .history-summary .p strong {
+    display: block; color: var(--spm-accent); font-size: 0.82rem;
+    margin-bottom: 2px;
+  }
+  .history-details {
+    margin-top: 10px;
+    border-top: 1px dashed var(--border); padding-top: 8px;
+    display: none;
+  }
+  .history-item.expanded .history-details { display: block; }
+  .history-shots {
+    display: grid; grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+  .history-shots ul {
+    list-style: none; max-height: 200px; overflow-y: auto;
+    font-size: 0.78rem;
+  }
+  .history-shots li {
+    display: flex; justify-content: space-between;
+    padding: 3px 4px; border-bottom: 1px solid var(--border);
+    font-variant-numeric: tabular-nums;
+  }
+  .history-shots li:last-child { border-bottom: 0; }
+  .history-delete {
+    margin-top: 8px;
+    background: none; border: 1px solid var(--border);
+    color: var(--danger); font-size: 0.78rem; font-weight: 700;
+    padding: 5px 10px; border-radius: 6px; cursor: pointer;
+  }
+  .history-delete:hover { background: #fff5f5; }
 </style>
 </head>
 <body>
@@ -387,7 +474,20 @@
   <div>
     <span class="match-elapsed" id="matchElapsed">—</span>
   </div>
-  <button id="newMatchBtn">New Match</button>
+  <div style="display:flex;gap:6px">
+    <button id="historyBtn" title="View past matches">History (<span id="historyCount">0</span>)</button>
+    <button id="newMatchBtn" title="Reset shots but keep current player names">New Match</button>
+    <button id="resetBtn" title="Archive current match and start fresh with new players">Reset</button>
+  </div>
+</div>
+
+<!-- History modal -->
+<div class="modal-backdrop" id="historyModal" hidden>
+  <div class="modal-box">
+    <button class="modal-close" id="historyClose" aria-label="Close">×</button>
+    <h2 class="modal-title">Match History</h2>
+    <div id="historyList"></div>
+  </div>
 </div>
 
 <div class="players-row">
@@ -441,8 +541,9 @@
    ──────────────────────────────────────────────────────────────────── */
 const APP_NAME = 'ShotClock';
 
-const APP_VERSION = window.APP_VERSION || '0.1';
-const STORAGE_KEY = 'shotclock_state_v1';
+const APP_VERSION = window.APP_VERSION || '0.3';
+const STORAGE_KEY = 'shotclock_state_v2';
+const STORAGE_KEY_V1 = 'shotclock_state_v1';  /* for migration */
 const TICK_MS = 100;  /* live-counter refresh */
 
 /* Histogram bins: [lower-inclusive, upper-exclusive) in SECONDS.
@@ -471,34 +572,74 @@ function binIndexForSec(sec) {
   return BINS.length - 1;
 }
 
-/* ────── State ────── */
-let state = null;
+/* ────── State (schema v2)
+   Root: { schema_version: 2, current: <match>, history: [<match>, ...] }
+   Match: { id, startedAt, endedAt|null, players: [{name,shots},{name,shots}],
+            activeIdx, currentShot, expanded: [false,false] }
 
-function defaultState() {
+   v1→v2 migration wraps the prior single-match shape into state.current
+   and initializes an empty history. Old key is left intact for one
+   release as a safety net (can be deleted in v0.4). */
+let state = null;
+function m() { return state.current; }   /* current match alias */
+
+function newMatchObj() {
   return {
-    schema_version: 1,
+    id: 'm_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6),
+    startedAt: Date.now(),
+    endedAt: null,
     players: [
       { name: 'Player 1', shots: [] },
       { name: 'Player 2', shots: [] }
     ],
     activeIdx: 0,
-    matchStartedAt: Date.now(),
     currentShot: null,
     expanded: [false, false]
   };
 }
+function defaultState() {
+  return { schema_version: 2, current: newMatchObj(), history: [] };
+}
 
 function loadState() {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return defaultState();
-    const s = JSON.parse(raw);
-    if (s.schema_version !== 1) return defaultState();
-    if (!Array.isArray(s.expanded) || s.expanded.length !== 2) s.expanded = [false, false];
-    return s;
-  } catch (_) {
-    return defaultState();
-  }
+    /* Prefer v2 storage */
+    const v2 = localStorage.getItem(STORAGE_KEY);
+    if (v2) {
+      const s = JSON.parse(v2);
+      if (s && s.schema_version === 2 && s.current && Array.isArray(s.history)) {
+        if (!Array.isArray(s.current.expanded) || s.current.expanded.length !== 2) {
+          s.current.expanded = [false, false];
+        }
+        return s;
+      }
+    }
+    /* Migrate v1 if present */
+    const v1 = localStorage.getItem(STORAGE_KEY_V1);
+    if (v1) {
+      const s1 = JSON.parse(v1);
+      if (s1 && s1.schema_version === 1) {
+        return {
+          schema_version: 2,
+          current: {
+            id: 'm_migrated_' + Date.now().toString(36),
+            startedAt: s1.matchStartedAt || Date.now(),
+            endedAt: null,
+            players: s1.players || [
+              { name: 'Player 1', shots: [] },
+              { name: 'Player 2', shots: [] }
+            ],
+            activeIdx: s1.activeIdx || 0,
+            currentShot: s1.currentShot || null,
+            expanded: Array.isArray(s1.expanded) && s1.expanded.length === 2
+              ? s1.expanded : [false, false]
+          },
+          history: []
+        };
+      }
+    }
+  } catch (_) { /* fall through to defaultState */ }
+  return defaultState();
 }
 
 function saveState() {
@@ -508,72 +649,89 @@ function saveState() {
 
 /* ────── Shot lifecycle ────── */
 function currentShotElapsedMs() {
-  if (!state.currentShot) return 0;
-  const { startedAt, pausedMs, pausedAt } = state.currentShot;
+  if (!m().currentShot) return 0;
+  const { startedAt, pausedMs, pausedAt } = m().currentShot;
   const live = pausedAt ? pausedAt : Date.now();
   return Math.max(0, live - startedAt - pausedMs);
 }
-function shotRunning() {
-  return !!(state.currentShot && !state.currentShot.pausedAt);
-}
-function shotPaused() {
-  return !!(state.currentShot && state.currentShot.pausedAt);
-}
+function shotRunning() { return !!(m().currentShot && !m().currentShot.pausedAt); }
+function shotPaused()  { return !!(m().currentShot &&  m().currentShot.pausedAt); }
 
 function startShot() {
-  state.currentShot = {
-    playerIdx: state.activeIdx,
+  m().currentShot = {
+    playerIdx: m().activeIdx,
     startedAt: Date.now(),
     pausedMs: 0,
     pausedAt: null
   };
-  saveState();
-  render();
+  saveState(); render();
 }
 function endShot() {
-  if (!state.currentShot) return;
+  if (!m().currentShot) return;
   const ms = currentShotElapsedMs();
-  const idx = state.currentShot.playerIdx;
-  state.players[idx].shots.push({ ms, endedAt: Date.now() });
-  state.currentShot = null;
-  saveState();
-  render();
+  const idx = m().currentShot.playerIdx;
+  m().players[idx].shots.push({ ms, endedAt: Date.now() });
+  m().currentShot = null;
+  saveState(); render();
 }
 function togglePause() {
-  if (!state.currentShot) return;
-  if (state.currentShot.pausedAt) {
-    /* Resume */
-    state.currentShot.pausedMs += Date.now() - state.currentShot.pausedAt;
-    state.currentShot.pausedAt = null;
+  if (!m().currentShot) return;
+  if (m().currentShot.pausedAt) {
+    m().currentShot.pausedMs += Date.now() - m().currentShot.pausedAt;
+    m().currentShot.pausedAt = null;
   } else {
-    /* Pause */
-    state.currentShot.pausedAt = Date.now();
+    m().currentShot.pausedAt = Date.now();
   }
-  saveState();
-  render();
+  saveState(); render();
 }
 function turnOver() {
-  /* If a shot is in progress, end it first (most natural — the strike
-     of the cue ball IS what triggered the turn change). */
-  if (state.currentShot) endShot();
-  state.activeIdx = 1 - state.activeIdx;
-  saveState();
-  render();
+  /* End any running shot first — the cue-ball strike IS what ended the turn. */
+  if (m().currentShot) endShot();
+  m().activeIdx = 1 - m().activeIdx;
+  saveState(); render();
 }
 function undoLastShot(pidx) {
-  if (!state.players[pidx].shots.length) return;
-  state.players[pidx].shots.pop();
-  saveState();
-  render();
+  if (!m().players[pidx].shots.length) return;
+  m().players[pidx].shots.pop();
+  saveState(); render();
 }
+
+/* "New Match" — start fresh shots for the SAME players. Same names kept. */
 function newMatch() {
-  if (!confirm('Start a new match? Current shots will be lost.')) return;
-  const names = [state.players[0].name, state.players[1].name];
-  state = defaultState();
-  state.players[0].name = names[0];
-  state.players[1].name = names[1];
+  const hasShots = m().players[0].shots.length || m().players[1].shots.length || m().currentShot;
+  if (hasShots && !confirm('Start a new match? Current shots will be lost (not archived).')) return;
+  const names = [m().players[0].name, m().players[1].name];
+  state.current = newMatchObj();
+  state.current.players[0].name = names[0];
+  state.current.players[1].name = names[1];
+  saveState(); render();
+}
+
+/* "Reset" — archive current match into history, start fresh with new players.
+   Names reset to defaults so the next observer doesn't accidentally log
+   against stale labels. */
+function resetForNewPlayers() {
+  const hasData = m().players[0].shots.length || m().players[1].shots.length || m().currentShot;
+  if (hasData) {
+    if (!confirm('Archive this match to history and reset for new players?')) return;
+    /* If a shot is mid-flight, record it before archiving. */
+    if (m().currentShot) endShot();
+    const archived = JSON.parse(JSON.stringify(m()));  /* deep clone */
+    archived.endedAt = Date.now();
+    state.history.unshift(archived);  /* most recent first */
+  } else {
+    if (!confirm('Reset for new players?')) return;
+  }
+  state.current = newMatchObj();
+  saveState(); render();
+}
+
+function deleteHistoryItem(id) {
+  if (!confirm('Delete this archived match? This cannot be undone.')) return;
+  state.history = state.history.filter(h => h.id !== id);
   saveState();
-  render();
+  renderHistoryModal();
+  render();  /* updates the History (N) badge */
 }
 
 /* ────── Render helpers ────── */
@@ -586,15 +744,25 @@ function fmtLive(ms) {
   return (ms / 1000).toFixed(1);
 }
 function fmtMatchElapsed() {
-  const ms = Date.now() - state.matchStartedAt;
+  const ms = Date.now() - m().startedAt;
   const s = Math.floor(ms / 1000);
-  const m = Math.floor(s / 60);
-  const h = Math.floor(m / 60);
-  if (h > 0) return h + ':' + String(m % 60).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0');
-  return m + ':' + String(s % 60).padStart(2, '0');
+  const mins = Math.floor(s / 60);
+  const h = Math.floor(mins / 60);
+  if (h > 0) return h + ':' + String(mins % 60).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0');
+  return mins + ':' + String(s % 60).padStart(2, '0');
+}
+function fmtDateTime(epoch) {
+  if (!epoch) return '—';
+  const d = new Date(epoch);
+  return d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 }
 function avgForPlayer(pidx) {
-  const shots = state.players[pidx].shots;
+  const shots = m().players[pidx].shots;
+  if (!shots.length) return null;
+  return shots.reduce((a, b) => a + b.ms, 0) / shots.length;
+}
+function avgForArchivedPlayer(matchObj, pidx) {
+  const shots = matchObj.players[pidx].shots;
   if (!shots.length) return null;
   return shots.reduce((a, b) => a + b.ms, 0) / shots.length;
 }
@@ -602,21 +770,20 @@ function avgForPlayer(pidx) {
 /* ────── Rendering ────── */
 function renderPlayer(pidx) {
   const playerEl = document.getElementById('player' + pidx);
-  const isActive = state.activeIdx === pidx;
+  const isActive = m().activeIdx === pidx;
   playerEl.classList.toggle('active', isActive);
 
-  document.getElementById('name' + pidx).value = state.players[pidx].name;
+  document.getElementById('name' + pidx).value = m().players[pidx].name;
 
-  const shots = state.players[pidx].shots;
+  const shots = m().players[pidx].shots;
   document.getElementById('count' + pidx).textContent = shots.length;
   const avgMs = avgForPlayer(pidx);
   document.getElementById('avg' + pidx).textContent = avgMs == null ? '—' : fmtSec(avgMs);
 
   /* Live row — only shows the live elapsed for the ACTIVE player's running shot */
   const live = document.getElementById('live' + pidx);
-  if (isActive && state.currentShot && state.currentShot.playerIdx === pidx) {
-    const ms = currentShotElapsedMs();
-    live.textContent = fmtLive(ms);
+  if (isActive && m().currentShot && m().currentShot.playerIdx === pidx) {
+    live.textContent = fmtLive(currentShotElapsedMs());
     live.className = 'live-row ' + (shotPaused() ? 'paused' : '');
   } else {
     live.textContent = '—';
@@ -625,7 +792,7 @@ function renderPlayer(pidx) {
 
   /* Shot list (most-recent-first) */
   const list = document.getElementById('list' + pidx);
-  list.classList.toggle('expanded', !!state.expanded[pidx]);
+  list.classList.toggle('expanded', !!m().expanded[pidx]);
   if (!shots.length) {
     list.innerHTML = '<li class="empty">No shots yet</li>';
   } else {
@@ -648,9 +815,7 @@ function renderPlayer(pidx) {
 
   /* Histogram */
   const counts = BINS.map(() => 0);
-  for (const sh of shots) {
-    counts[binIndexForSec(sh.ms / 1000)]++;
-  }
+  for (const sh of shots) counts[binIndexForSec(sh.ms / 1000)]++;
   const maxCount = Math.max(1, ...counts);
   const hist = document.getElementById('hist' + pidx);
   hist.innerHTML = counts.map((n, i) => {
@@ -663,9 +828,9 @@ function renderPlayer(pidx) {
 function renderControls() {
   const primary = document.getElementById('primaryBtn');
   const pauseBtn = document.getElementById('pauseBtn');
-  const activeName = state.players[state.activeIdx].name;
+  const activeName = m().players[m().activeIdx].name;
 
-  if (!state.currentShot) {
+  if (!m().currentShot) {
     primary.className = 'btn-primary';
     primary.textContent = 'Start shot — ' + activeName;
     pauseBtn.disabled = true;
@@ -686,11 +851,69 @@ function renderControls() {
   }
 }
 
+/* ────── History modal ────── */
+let _historyExpanded = new Set();   /* match ids currently expanded inline */
+
+function renderHistoryModal() {
+  document.getElementById('historyList').innerHTML =
+    (!state.history.length)
+      ? '<div class="history-empty">No archived matches yet. Tap <strong>Reset</strong> to archive the current match and start fresh.</div>'
+      : state.history.map(h => {
+        const expanded = _historyExpanded.has(h.id);
+        const p0 = h.players[0], p1 = h.players[1];
+        const a0 = avgForArchivedPlayer(h, 0), a1 = avgForArchivedPlayer(h, 1);
+        const dur = h.endedAt && h.startedAt
+          ? fmtMatchDuration(h.endedAt - h.startedAt) : '—';
+        const shotsHtml = (shots, name) =>
+          '<div><div style="font-weight:700;color:var(--spm-accent);font-size:0.82rem;margin-bottom:4px">' +
+            escHtml(name) + '</div>' +
+            (shots.length
+              ? '<ul>' + shots.map((s, i) =>
+                  '<li><span class="shot-idx">#' + (i + 1) + '</span>' +
+                  '<span class="shot-time ' + colorForSec(s.ms / 1000) + '">' + fmtSec(s.ms) + '</span></li>'
+                ).join('') + '</ul>'
+              : '<div style="color:var(--muted);font-size:0.78rem;font-style:italic">No shots</div>') +
+          '</div>';
+        return '<div class="history-item' + (expanded ? ' expanded' : '') + '" data-mid="' + h.id + '">' +
+          '<div class="history-item-head" data-toggle="' + h.id + '">' +
+            '<div>' +
+              '<div style="font-weight:700">' + escHtml(p0.name) + ' vs ' + escHtml(p1.name) + '</div>' +
+              '<div class="history-when">' + fmtDateTime(h.endedAt || h.startedAt) + ' · ' + dur + '</div>' +
+            '</div>' +
+            '<div style="font-size:1.1rem;color:var(--muted)">' + (expanded ? '▾' : '▸') + '</div>' +
+          '</div>' +
+          '<div class="history-summary">' +
+            '<div class="p"><strong>' + escHtml(p0.name) + '</strong>' +
+              p0.shots.length + ' shots · avg ' + (a0 == null ? '—' : fmtSec(a0)) + '</div>' +
+            '<div class="p"><strong>' + escHtml(p1.name) + '</strong>' +
+              p1.shots.length + ' shots · avg ' + (a1 == null ? '—' : fmtSec(a1)) + '</div>' +
+          '</div>' +
+          '<div class="history-details">' +
+            '<div class="history-shots">' + shotsHtml(p0.shots, p0.name) + shotsHtml(p1.shots, p1.name) + '</div>' +
+            '<button class="history-delete" data-del="' + h.id + '">Delete this match</button>' +
+          '</div>' +
+        '</div>';
+      }).join('');
+}
+function fmtMatchDuration(ms) {
+  const s = Math.floor(ms / 1000);
+  const mins = Math.floor(s / 60);
+  const h = Math.floor(mins / 60);
+  if (h > 0) return h + 'h ' + (mins % 60) + 'm';
+  if (mins > 0) return mins + 'm ' + (s % 60) + 's';
+  return s + 's';
+}
+function escHtml(s) {
+  return String(s || '').replace(/[&<>"']/g, ch =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+}
+
 function render() {
   document.title = APP_NAME;
   document.getElementById('appName').textContent = APP_NAME;
   document.getElementById('vBadge').textContent = APP_VERSION;
   document.getElementById('matchElapsed').textContent = 'Match: ' + fmtMatchElapsed();
+  document.getElementById('historyCount').textContent = state.history.length;
   renderPlayer(0);
   renderPlayer(1);
   renderControls();
@@ -700,7 +923,7 @@ function render() {
 setInterval(() => {
   if (shotRunning()) {
     /* Only re-render the live-row + match elapsed — avoid full DOM rebuild for perf */
-    const pidx = state.currentShot.playerIdx;
+    const pidx = m().currentShot.playerIdx;
     const live = document.getElementById('live' + pidx);
     live.textContent = fmtLive(currentShotElapsedMs());
   }
@@ -718,21 +941,49 @@ function haptic() {
 
 document.getElementById('primaryBtn').addEventListener('click', () => {
   haptic();
-  if (!state.currentShot) startShot();
+  if (!m().currentShot) startShot();
   else if (shotPaused()) endShot();   /* end while paused — record current elapsed */
   else endShot();
 });
 document.getElementById('pauseBtn').addEventListener('click', togglePause);
 document.getElementById('turnoverBtn').addEventListener('click', turnOver);
 document.getElementById('newMatchBtn').addEventListener('click', newMatch);
+document.getElementById('resetBtn').addEventListener('click', resetForNewPlayers);
+
+/* History modal */
+document.getElementById('historyBtn').addEventListener('click', () => {
+  renderHistoryModal();
+  document.getElementById('historyModal').hidden = false;
+});
+document.getElementById('historyClose').addEventListener('click', () => {
+  document.getElementById('historyModal').hidden = true;
+});
+document.getElementById('historyModal').addEventListener('click', e => {
+  if (e.target.id === 'historyModal') {  /* backdrop click */
+    document.getElementById('historyModal').hidden = true;
+  } else if (e.target.dataset.toggle) {
+    const id = e.target.dataset.toggle;
+    if (_historyExpanded.has(id)) _historyExpanded.delete(id);
+    else _historyExpanded.add(id);
+    renderHistoryModal();
+  } else if (e.target.closest('.history-item-head')) {
+    const head = e.target.closest('.history-item-head');
+    const id = head.dataset.toggle;
+    if (_historyExpanded.has(id)) _historyExpanded.delete(id);
+    else _historyExpanded.add(id);
+    renderHistoryModal();
+  } else if (e.target.dataset.del) {
+    deleteHistoryItem(e.target.dataset.del);
+  }
+});
 
 document.getElementById('name0').addEventListener('input', e => {
-  state.players[0].name = e.target.value.trim() || 'Player 1';
+  m().players[0].name = e.target.value.trim() || 'Player 1';
   saveState();
   renderControls();
 });
 document.getElementById('name1').addEventListener('input', e => {
-  state.players[1].name = e.target.value.trim() || 'Player 2';
+  m().players[1].name = e.target.value.trim() || 'Player 2';
   saveState();
   renderControls();
 });
@@ -741,14 +992,14 @@ document.getElementById('name1').addEventListener('input', e => {
    when editing the name input, or tapping an undo button). */
 document.getElementById('player0').addEventListener('click', e => {
   if (e.target.matches('input, button')) return;
-  if (state.activeIdx === 0) return;
-  state.activeIdx = 0;
+  if (m().activeIdx === 0) return;
+  m().activeIdx = 0;
   saveState(); render();
 });
 document.getElementById('player1').addEventListener('click', e => {
   if (e.target.matches('input, button')) return;
-  if (state.activeIdx === 1) return;
-  state.activeIdx = 1;
+  if (m().activeIdx === 1) return;
+  m().activeIdx = 1;
   saveState(); render();
 });
 
@@ -759,7 +1010,7 @@ document.body.addEventListener('click', e => {
     undoLastShot(pid);
   } else if (e.target.matches('.expand-toggle')) {
     const pid = +e.target.dataset.pid;
-    state.expanded[pid] = !state.expanded[pid];
+    m().expanded[pid] = !m().expanded[pid];
     saveState(); render();
   }
 });
