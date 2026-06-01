@@ -588,9 +588,58 @@
     <span class="v-badge">v<span id="vBadge">0.4</span></span>
   </div>
   <div style="display:flex;gap:6px">
+    <button id="installBtn" title="Install to home screen" hidden>⊕ Install</button>
     <button id="historyBtn" title="View past matches">Hist (<span id="historyCount">0</span>)</button>
     <button id="newMatchBtn" title="Reset shots but keep current player names">New</button>
     <button id="resetBtn" title="Archive current match and start fresh with new players">Reset</button>
+  </div>
+</div>
+
+<!-- Install modal — used by both the first-time prompt and the
+     Install button when tapped. On Chrome/Android the body shows the
+     native-install path; on iOS it shows the Share→Add instructions. -->
+<div class="modal-backdrop" id="installModal" hidden>
+  <div class="modal-box" style="max-width:440px">
+    <button class="modal-close" id="installClose" aria-label="Close">×</button>
+    <h2 class="modal-title">Install ShotClock</h2>
+
+    <div id="installBodyAndroid" hidden>
+      <p style="margin-bottom:14px;font-size:0.92rem">
+        Install ShotClock to your home screen for a full-screen, app-like experience —
+        no browser chrome eating the screen. State stays where it is; nothing else changes.
+      </p>
+      <button class="btn-secondary" id="installAcceptBtn"
+        style="width:100%;padding:14px;background:var(--spm-accent);color:#fff;border:0;border-radius:10px;font-weight:800;font-size:1rem;cursor:pointer">
+        Install now
+      </button>
+    </div>
+
+    <div id="installBodyIos" hidden>
+      <p style="margin-bottom:10px;font-size:0.92rem">
+        iOS doesn't allow apps to install themselves, but the Add-to-Home-Screen
+        button lives in Safari's Share menu. Here's the path:
+      </p>
+      <ol style="padding-left:22px;font-size:0.9rem;line-height:1.6;margin-bottom:14px">
+        <li>Tap the <strong>Share</strong> icon at the bottom of Safari (a square with an up arrow).</li>
+        <li>Scroll the share sheet and tap <strong>Add to Home Screen</strong>.</li>
+        <li>Tap <strong>Add</strong> in the top-right.</li>
+      </ol>
+      <button class="btn-secondary" id="installIosDoneBtn"
+        style="width:100%;padding:12px;background:var(--spm-accent);color:#fff;border:0;border-radius:10px;font-weight:800;font-size:0.95rem;cursor:pointer">
+        I've added it — don't show this again
+      </button>
+    </div>
+
+    <div style="display:flex;gap:8px;margin-top:12px;font-size:0.85rem">
+      <button class="install-action" id="installLaterBtn"
+        style="flex:1;background:none;border:1px solid var(--border);color:var(--muted);padding:10px;border-radius:8px;cursor:pointer">
+        Maybe later
+      </button>
+      <button class="install-action" id="installNeverBtn"
+        style="flex:1;background:none;border:1px solid var(--border);color:var(--muted);padding:10px;border-radius:8px;cursor:pointer">
+        Don't show again
+      </button>
+    </div>
   </div>
 </div>
 
@@ -650,7 +699,7 @@
    ──────────────────────────────────────────────────────────────────── */
 const APP_NAME = 'ShotClock';
 
-const APP_VERSION = window.APP_VERSION || '0.4';
+const APP_VERSION = window.APP_VERSION || '0.5';
 const STORAGE_KEY = 'shotclock_state_v2';
 const STORAGE_KEY_V1 = 'shotclock_state_v1';  /* for migration */
 const TICK_MS = 100;  /* live-counter refresh */
@@ -1064,16 +1113,178 @@ function haptic() {
   if (navigator.vibrate) try { navigator.vibrate(15); } catch (_) {}
 }
 
+/* ────── Service worker + silent auto-update (v0.5+) ──────
+   Register sw.js; when a new SW activates (controllerchange), reload —
+   but ONLY if there's no shot currently in flight. If a shot is running
+   or paused, set a pending flag and reload at the next "idle" moment
+   (after the shot ends or a turn over). This eliminates the only real
+   data-loss risk of silent auto-update for this app. */
+let _pendingReload = false;
+
+function isShotInFlight() {
+  return !!(state && m() && m().currentShot);
+}
+
+function maybeReload() {
+  if (!_pendingReload) return;
+  if (isShotInFlight()) return;  /* defer further */
+  /* Persist state once more before reload (belt + suspenders). */
+  try { saveState(); } catch (_) {}
+  /* Use location.reload(true) is deprecated; cache-bust via the URL.
+     Adding ?_v= forces Pages and the SW network-first path to refetch. */
+  location.reload();
+}
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js').catch(err => {
+      console.warn('[shotclock] SW registration failed:', err);
+    });
+    let refreshing = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (refreshing) return;
+      refreshing = true;
+      _pendingReload = true;
+      maybeReload();
+    });
+  });
+}
+
+/* ────── PWA install detection + prompt + button ──────
+   Three signals layered:
+     1) display-mode: standalone  → already running installed, hide prompt
+     2) beforeinstallprompt event → Chrome/Android only; reveals Install button
+     3) localStorage flag         → user-confirmed install OR dismissed-forever
+*/
+let _bipEvent = null;
+let _installState = { installed: false, dismissedForever: false, firstPromptShown: false };
+try {
+  const raw = localStorage.getItem('shotclock_install_v1');
+  if (raw) _installState = { ..._installState, ...JSON.parse(raw) };
+} catch (_) {}
+
+function saveInstallState() {
+  try { localStorage.setItem('shotclock_install_v1', JSON.stringify(_installState)); } catch (_) {}
+}
+
+function isStandalone() {
+  return window.matchMedia('(display-mode: standalone)').matches
+      || window.navigator.standalone === true;
+}
+function isIOS() {
+  return /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+}
+function isAndroidChromium() {
+  return /Android/.test(navigator.userAgent);
+}
+
+function updateInstallButton() {
+  const btn = document.getElementById('installBtn');
+  if (!btn) return;
+  /* Hide if running installed, dismissed-forever, or installed flag set */
+  if (isStandalone() || _installState.installed || _installState.dismissedForever) {
+    btn.hidden = true;
+    return;
+  }
+  /* Chrome path requires we captured a beforeinstallprompt event */
+  if (_bipEvent) { btn.hidden = false; return; }
+  /* iOS path: always offer the instructions modal */
+  if (isIOS()) { btn.hidden = false; return; }
+  /* Other browsers: hide */
+  btn.hidden = true;
+}
+
+window.addEventListener('beforeinstallprompt', e => {
+  /* Prevent Chrome's mini-infobar; we'll show our own UI. */
+  e.preventDefault();
+  _bipEvent = e;
+  updateInstallButton();
+});
+
+window.addEventListener('appinstalled', () => {
+  _bipEvent = null;
+  _installState.installed = true;
+  saveInstallState();
+  closeInstallModal();
+  updateInstallButton();
+});
+
+function openInstallModal() {
+  document.getElementById('installBodyAndroid').hidden = !( _bipEvent && !isIOS() );
+  document.getElementById('installBodyIos').hidden = !isIOS();
+  document.getElementById('installModal').hidden = false;
+}
+function closeInstallModal() {
+  document.getElementById('installModal').hidden = true;
+}
+
+async function triggerNativeInstall() {
+  if (!_bipEvent) { closeInstallModal(); return; }
+  _bipEvent.prompt();
+  try {
+    const choice = await _bipEvent.userChoice;
+    if (choice.outcome === 'accepted') {
+      _installState.installed = true;
+      saveInstallState();
+    }
+  } catch (_) {}
+  _bipEvent = null;
+  closeInstallModal();
+  updateInstallButton();
+}
+
+/* One-time delayed install prompt: only after the user has actually
+   engaged with the app (first shot recorded OR 60s of use), and only
+   once. Skipped entirely if already standalone / installed / dismissed. */
+function maybeShowFirstTimeInstallPrompt() {
+  if (_installState.firstPromptShown) return;
+  if (_installState.installed || _installState.dismissedForever) return;
+  if (isStandalone()) return;
+  if (!_bipEvent && !isIOS()) return;  /* nothing to show */
+  _installState.firstPromptShown = true;
+  saveInstallState();
+  openInstallModal();
+}
+setTimeout(maybeShowFirstTimeInstallPrompt, 60_000);  /* 60s engagement timer */
+
 document.getElementById('primaryBtn').addEventListener('click', () => {
   haptic();
+  const wasFirstShot = !m().players[0].shots.length && !m().players[1].shots.length;
   if (!m().currentShot) startShot();
   else if (shotPaused()) endShot();   /* end while paused — record current elapsed */
   else endShot();
+  /* After ANY shot ends, give the deferred-reload a chance + maybe trigger
+     the first-time install prompt (after the very first recorded shot). */
+  maybeReload();
+  if (wasFirstShot && (m().players[0].shots.length || m().players[1].shots.length)) {
+    setTimeout(maybeShowFirstTimeInstallPrompt, 500);
+  }
 });
 document.getElementById('pauseBtn').addEventListener('click', togglePause);
-document.getElementById('turnoverBtn').addEventListener('click', turnOver);
-document.getElementById('newMatchBtn').addEventListener('click', newMatch);
-document.getElementById('resetBtn').addEventListener('click', resetForNewPlayers);
+document.getElementById('turnoverBtn').addEventListener('click', () => { turnOver(); maybeReload(); });
+document.getElementById('newMatchBtn').addEventListener('click', () => { newMatch(); maybeReload(); });
+document.getElementById('resetBtn').addEventListener('click', () => { resetForNewPlayers(); maybeReload(); });
+
+/* Install button + modal */
+document.getElementById('installBtn').addEventListener('click', openInstallModal);
+document.getElementById('installClose').addEventListener('click', closeInstallModal);
+document.getElementById('installModal').addEventListener('click', e => {
+  if (e.target.id === 'installModal') closeInstallModal();  /* backdrop click */
+});
+document.getElementById('installAcceptBtn').addEventListener('click', triggerNativeInstall);
+document.getElementById('installIosDoneBtn').addEventListener('click', () => {
+  _installState.installed = true;
+  saveInstallState();
+  closeInstallModal();
+  updateInstallButton();
+});
+document.getElementById('installLaterBtn').addEventListener('click', closeInstallModal);
+document.getElementById('installNeverBtn').addEventListener('click', () => {
+  _installState.dismissedForever = true;
+  saveInstallState();
+  closeInstallModal();
+  updateInstallButton();
+});
 
 /* History modal */
 document.getElementById('historyBtn').addEventListener('click', () => {
@@ -1233,6 +1444,15 @@ document.addEventListener('mouseup', swipeEnd);
 /* ────── Boot ────── */
 state = loadState();
 render();
+updateInstallButton();
+
+/* Re-evaluate install-button visibility if the display mode changes
+   (user installs while page is open, or returns from standalone to
+   browser tab) — covers the edge case where Chrome's install completes
+   via the address-bar menu while the page is still open. */
+try {
+  window.matchMedia('(display-mode: standalone)').addEventListener('change', updateInstallButton);
+} catch (_) { /* older browsers — silently ignore */ }
 </script>
 </body>
 </html>
