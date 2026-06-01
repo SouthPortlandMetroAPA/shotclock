@@ -40,6 +40,28 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>ShotClock</title>
 <meta name="description" content="Billiards shot-pace timer">
+
+<!-- ════════════════════════════════════════════════════════════════════════
+     PWA / Add-to-Home-Screen
+     iOS (Safari) uses the apple-mobile-web-app-* meta tags + apple-touch-icon.
+     Android (Chrome / Samsung Internet) uses manifest.json. Theme color
+     matches the header gradient origin so the status bar blends in.
+     ──────────────────────────────────────────────────────────────────────── -->
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#0031a1">
+<meta name="color-scheme" content="light dark">
+
+<!-- iOS-specific: open in standalone mode (no Safari chrome), match status bar -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="ShotClock">
+
+<!-- App icon (single SVG works for both Chrome and iOS 13+). -->
+<link rel="icon" type="image/svg+xml" href="icon.svg">
+<link rel="apple-touch-icon" href="icon.svg">
+<link rel="mask-icon" href="icon.svg" color="#0031a1">
+
 <script src="version.js"></script>
 <style>
   :root {
@@ -62,7 +84,19 @@
     overscroll-behavior: none;
     -webkit-tap-highlight-color: transparent;
   }
-  body { min-height: 100vh; padding-bottom: 200px; }
+  /* v0.4: zero-scroll layout.
+     - height: 100dvh (dynamic viewport) so iOS Safari URL bar transitions
+       don't break the bound. svh/lvh would also work but dvh is most
+       practically right — uses the CURRENT visible viewport.
+     - overflow: hidden so nothing inside body can push the page itself
+       past the screen. Internal widgets (shot list) handle their own scroll.
+     - display: flex column for predictable header / players / controls layout. */
+  body {
+    height: 100dvh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
 
   .header {
     background: linear-gradient(135deg, var(--spm-primary), var(--spm-accent));
@@ -93,11 +127,24 @@
   .players-row {
     display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
     padding: 10px;
+    /* flex:1 so this row takes all remaining vertical space between
+       header/top-bar and controls. min-height:0 is the magic that lets
+       a flex child SHRINK below its content size — without it, the
+       internal list scroll wouldn't activate (the list would push the
+       page beyond viewport). */
+    flex: 1;
+    min-height: 0;
   }
   .player {
     background: var(--card); border: 2px solid var(--border);
     border-radius: var(--radius); padding: 10px;
     transition: border-color 0.15s, box-shadow 0.15s;
+    /* Player column is itself a flex column: name + meta + live + list
+       (flex:1) + histogram + labels. List is the elastic widget. */
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
   }
   .player.active {
     border-color: var(--spm-accent);
@@ -135,34 +182,68 @@
   .shot-list {
     list-style: none;
     border-top: 1px dashed var(--border);
-    max-height: 110px;
-    overflow: hidden;
-    transition: max-height 0.2s;
+    /* flex:1 lets the list fill the available height inside the player
+       column. overflow-y:auto activates internal scrolling once shots
+       exceed the visible window. The PAGE never scrolls; this widget does. */
+    flex: 1;
+    min-height: 60px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
   }
-  .shot-list.expanded { max-height: 500px; overflow-y: auto; }
   .shot-list li {
+    position: relative;
     display: flex; justify-content: space-between; align-items: center;
-    padding: 4px 2px; border-bottom: 1px solid var(--border);
+    padding: 5px 4px;
+    border-bottom: 1px solid var(--border);
     font-size: 0.78rem; font-variant-numeric: tabular-nums;
+    touch-action: pan-y;  /* allow vertical scroll, intercept horizontal */
+    background: var(--card);
   }
   .shot-list li:last-child { border-bottom: 0; }
   .shot-list li.empty {
     color: var(--muted); justify-content: center; padding: 12px 0;
     border-bottom: 0; font-style: italic;
   }
-  .shot-idx { color: var(--muted); width: 28px; }
+  /* Swipe-right-to-delete: when a row is being dragged, slide it right;
+     a red "Delete" backdrop becomes visible behind it. If swipe passes
+     the trigger threshold, the row commits to deletion (slides out fully
+     and is removed from DOM + state on transitionend). */
+  .shot-list li.swiping {
+    transition: none;
+  }
+  .shot-list li.swipe-anim {
+    transition: transform 0.18s ease-out, opacity 0.18s ease-out;
+  }
+  .shot-list li.swipe-gone {
+    transform: translateX(100%) !important;
+    opacity: 0;
+  }
+  .shot-list li::before {
+    content: 'Delete';
+    position: absolute; inset: 0;
+    background: var(--danger); color: #fff;
+    display: flex; align-items: center; padding-left: 14px;
+    font-weight: 800; font-size: 0.76rem; letter-spacing: 0.5px;
+    border-radius: 4px;
+    z-index: -1;
+    opacity: 0;
+    transition: opacity 0.12s;
+  }
+  .shot-list li.swiping::before, .shot-list li.swipe-gone::before {
+    opacity: 1;
+  }
+  .shot-idx { color: var(--muted); width: 28px; flex-shrink: 0; }
   .shot-time { font-weight: 700; }
   .shot-time.g { color: var(--success); }
   .shot-time.y { color: var(--warn); }
   .shot-time.r { color: var(--danger); }
-  .undo-shot {
-    background: none; border: 0; color: var(--muted);
-    cursor: pointer; padding: 2px 6px; font-size: 0.9rem; line-height: 1;
-  }
-  .expand-toggle {
-    width: 100%; background: none; border: 0;
-    color: var(--spm-accent); font-size: 0.74rem; font-weight: 600;
-    padding: 6px 0 0; cursor: pointer;
+  .swipe-hint {
+    font-size: 0.6rem; color: var(--muted);
+    text-align: right; flex: 1; padding-right: 6px;
+    opacity: 0.5;
+    font-style: italic;
   }
 
   .histogram {
@@ -197,47 +278,53 @@
     text-align: center;
   }
 
+  /* Controls: three equal-width buttons in a single row, sticky to the
+     bottom of the layout (no longer position:fixed — body is a flex
+     column now, so controls live as a flex child at the end). */
   .controls {
-    position: fixed; bottom: 0; left: 0; right: 0;
+    flex-shrink: 0;
     background: var(--card);
     border-top: 1px solid var(--border);
-    /* Home-indicator clearance via env() — iPhone notched models have
-       ~34px inset at bottom; non-notched iPhones + Android get 0. */
-    padding: 10px calc(12px + env(safe-area-inset-right)) calc(18px + env(safe-area-inset-bottom)) calc(12px + env(safe-area-inset-left));
+    /* Home-indicator + curved-edge clearance via env() — iPhone notched
+       models have ~34px inset at bottom; non-notched iPhones + Android get 0. */
+    padding: 10px calc(10px + env(safe-area-inset-right)) calc(12px + env(safe-area-inset-bottom)) calc(10px + env(safe-area-inset-left));
     box-shadow: 0 -2px 10px rgba(0,0,0,0.06);
-    z-index: 50;
   }
-  .btn-primary {
-    width: 100%;
-    background: var(--spm-accent); color: #fff;
-    border: 0; border-radius: 12px;
-    padding: 18px;
-    font-size: 1.15rem; font-weight: 800; letter-spacing: 0.5px;
-    cursor: pointer;
-    transition: background 0.1s, transform 0.05s;
+  .ctrl-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 8px;
   }
-  .btn-primary:active { transform: scale(0.99); }
-  .btn-primary.running { background: var(--success); }
-  .btn-primary.paused { background: var(--warn); }
-  .btn-row {
-    display: grid; grid-template-columns: 1fr 1fr;
-    gap: 8px; margin-top: 8px;
-  }
-  .btn-secondary {
+  .ctrl-btn {
     background: var(--card); color: var(--text);
     border: 1px solid var(--border);
-    border-radius: 10px; padding: 12px;
-    font-size: 0.9rem; font-weight: 700; cursor: pointer;
+    border-radius: 12px;
+    padding: 16px 8px;
+    font-size: 0.92rem; font-weight: 800; letter-spacing: 0.3px;
+    cursor: pointer;
+    text-align: center;
+    transition: background 0.1s, transform 0.05s, border-color 0.1s;
+    line-height: 1.15;
+    min-height: 56px;
   }
-  .btn-secondary:active { background: var(--bg); }
-  .btn-secondary[disabled] { opacity: 0.4; cursor: not-allowed; }
-  .btn-secondary.pause-active {
-    background: var(--warn); color: #fff; border-color: var(--warn);
+  .ctrl-btn:active { transform: scale(0.97); }
+  .ctrl-btn[disabled] { opacity: 0.4; cursor: not-allowed; }
+  /* Start/Stop is the prominent center button — bigger, brand color */
+  .ctrl-btn.primary {
+    background: var(--spm-accent); color: #fff;
+    border-color: var(--spm-accent);
+    font-size: 1rem;
+    padding: 18px 8px;
   }
+  .ctrl-btn.primary.running { background: var(--success); border-color: var(--success); }
+  .ctrl-btn.primary.paused  { background: var(--warn);    border-color: var(--warn); }
+  .ctrl-btn.pause-active { background: var(--warn); color: #fff; border-color: var(--warn); }
 
-  .footer-version {
-    text-align: center; padding: 14px 0 30px;
-    font-size: 0.68rem; color: var(--muted);
+  /* Tiny version badge tucked into the top-bar — no footer (would eat
+     vertical space which we don't have in the no-scroll layout). */
+  .v-badge {
+    font-size: 0.65rem; color: var(--muted); margin-left: 8px;
+    font-variant-numeric: tabular-nums;
   }
 
   /* ──────────────────────────────────────────────────────────────────
@@ -252,7 +339,8 @@
   @media (max-width: 360px) {
     .players-row { gap: 4px; padding: 6px; }
     .player { padding: 8px; }
-    .btn-primary { font-size: 1rem; padding: 16px; }
+    .ctrl-btn { font-size: 0.82rem; padding: 14px 6px; min-height: 50px; }
+    .ctrl-btn.primary { font-size: 0.9rem; padding: 14px 6px; min-height: 56px; }
   }
 
   /* TIER · Plus / Pro Max iPhones (iPhone 16 Pro Max, iPhone 17 Pro Max
@@ -265,11 +353,45 @@
     .player-name { font-size: 1.1rem; }
     .player-meta { font-size: 0.78rem; }
     .live-row { height: 32px; font-size: 1.15rem; }
-    .shot-list { max-height: 160px; }
     .shot-list li { font-size: 0.85rem; padding: 5px 4px; }
     .histogram { height: 70px; }
-    .btn-primary { padding: 22px; font-size: 1.2rem; }
-    .btn-secondary { padding: 14px; font-size: 0.95rem; }
+    .ctrl-btn { padding: 18px 8px; font-size: 0.96rem; min-height: 62px; }
+    .ctrl-btn.primary { padding: 20px 8px; font-size: 1.05rem; min-height: 70px; }
+  }
+
+  /* TIER · Fold-laptop posture (Z Fold 7 half-open, hinge running
+     horizontally across the middle of the screen). The device's bottom
+     half is flat on a surface and the top half is upright like a laptop
+     lid. UX: stats anchored to the top viewport segment (visible above
+     the hinge crease), three control buttons fill the bottom segment
+     (the user's thumbs sit there naturally when the device is on a table).
+
+     Detected by EITHER:
+       (spanning: single-fold-horizontal)  — older CSS spanning spec
+       (device-posture: folded)            — newer CSS Device Posture spec
+     Dual-query so we catch Samsung Internet AND newer Chrome. The
+     env(viewport-segment-*) variables pin each block to its segment. */
+  @media (spanning: single-fold-horizontal),
+         (device-posture: folded) {
+    body { display: grid; grid-template-rows: auto auto 1fr auto; }
+    .header { grid-row: 1; }
+    .top-bar { grid-row: 2; }
+    .players-row {
+      grid-row: 3;
+      /* Stretch to fill the TOP viewport segment, ending at the hinge.
+         env() yields the bottom of the top segment. */
+      max-height: calc(env(viewport-segment-bottom 0 0) - env(viewport-segment-top 0 0) - 110px);
+    }
+    .controls {
+      grid-row: 4;
+      /* Drop the home-indicator bottom padding here — controls are
+         visually centered in the bottom segment, not at viewport bottom. */
+      padding-bottom: calc(12px + env(safe-area-inset-bottom));
+      /* Bigger buttons since the bottom half has dedicated real estate */
+      padding-top: 16px;
+    }
+    .ctrl-btn { min-height: 64px; font-size: 1rem; }
+    .ctrl-btn.primary { font-size: 1.1rem; min-height: 72px; }
   }
 
   /* TIER · Foldable unfolded — Galaxy Z Fold 7 inner screen (~8.0", aspect
@@ -291,48 +413,39 @@
     .player-name { font-size: 1.4rem; }
     .player-meta { font-size: 0.9rem; }
     .live-row { font-size: 1.6rem; height: 44px; }
-    .shot-list { max-height: 320px; }  /* much taller — fold has the vertical space */
     .shot-list li { font-size: 0.95rem; padding: 7px 6px; }
     .histogram { height: 100px; }
     .hist-labels { font-size: 0.68rem; }
-    /* Bring the controls inline (not fixed at bottom) on the unfolded
-       layout — there's room to spare. */
+    /* Constrain the controls width on this huge canvas so the buttons
+       don't get absurdly wide. */
     .controls {
-      position: static;
       max-width: 1200px;
-      margin: 0 auto 20px;
+      margin: 0 auto;
       border-top: 0;
       box-shadow: none;
-      padding-bottom: 20px;
     }
-    .btn-primary { padding: 24px; font-size: 1.3rem; }
+    .ctrl-btn { padding: 22px 8px; font-size: 1.05rem; min-height: 70px; }
+    .ctrl-btn.primary { padding: 26px 8px; font-size: 1.2rem; min-height: 80px; }
   }
 
   /* TIER · Landscape phone (any iPhone or Galaxy rotated). Cap height
-     means we have to compress vertically — move controls to the right
-     edge so the player columns get the full viewport height. */
+     means we have to compress vertically. With the no-scroll constraint,
+     the players row still gets flex:1 of the remaining vertical space
+     after header + top-bar + controls take their natural sizes. */
   @media (orientation: landscape) and (max-height: 500px) {
-    body { padding-bottom: 0; }
     .header { padding-top: calc(6px + env(safe-area-inset-top)); padding-bottom: 6px; }
     .header h1 { font-size: 0.95rem; }
     .header .sub { display: none; }
     .top-bar { padding: 4px 12px; }
-    .players-row {
-      grid-template-columns: 1fr 1fr 180px;  /* controls become a third column */
-      gap: 6px; padding: 6px;
-    }
-    .shot-list { max-height: 80px; }
-    .histogram { height: 50px; }
-    .controls {
-      position: static;
-      grid-column: 3;
-      grid-row: 1;
-      border-top: 0; box-shadow: none;
-      padding: 0;
-      display: flex; flex-direction: column; gap: 6px;
-    }
-    .btn-primary { padding: 14px; font-size: 0.95rem; }
-    .btn-row { grid-template-columns: 1fr; gap: 6px; margin-top: 0; }
+    .players-row { gap: 6px; padding: 6px; }
+    .player { padding: 6px; }
+    .player-name { font-size: 0.9rem; }
+    .player-meta { font-size: 0.7rem; margin: 4px 0; }
+    .live-row { height: 22px; font-size: 0.9rem; margin-bottom: 4px; }
+    .histogram { height: 38px; }
+    .hist-labels { font-size: 0.48rem; }
+    .ctrl-btn { padding: 10px 6px; font-size: 0.82rem; min-height: 44px; }
+    .ctrl-btn.primary { padding: 12px 6px; font-size: 0.88rem; min-height: 48px; }
   }
 
   /* TIER · Pointer device (Z Fold 7 with DeX, iPhone via cursor in
@@ -340,10 +453,10 @@
      Hover states give cursor users feedback that touch users don't
      need or want. */
   @media (hover: hover) and (pointer: fine) {
-    .btn-primary:hover { filter: brightness(1.08); }
-    .btn-secondary:hover { background: var(--bg); }
+    .ctrl-btn:hover:not([disabled]) { filter: brightness(1.05); }
+    .ctrl-btn.primary:hover:not([disabled]) { filter: brightness(1.1); }
     .player:hover:not(.active) { border-color: #cbd5e1; cursor: pointer; }
-    .undo-shot:hover, .expand-toggle:hover { color: var(--spm-accent); }
+    .shot-list li:hover { background: var(--bg); cursor: grab; }
   }
 
   /* TIER · Dark mode (system-level, both iOS and Android One UI honor it).
@@ -359,9 +472,8 @@
     }
     .header { box-shadow: 0 2px 8px rgba(0,0,0,0.5); }
     .player-name:focus { background: #232838; }
-    .source-btn:hover { background: #1f2433; }
-    .btn-secondary { background: var(--card); }
-    .undo-shot, .expand-toggle { color: #9ca3af; }
+    .ctrl-btn { background: var(--card); }
+    .shot-list li { background: var(--card); }
   }
 
   /* TIER · Reduce motion (iOS Settings → Accessibility → Motion → Reduce
@@ -473,10 +585,11 @@
 <div class="top-bar">
   <div>
     <span class="match-elapsed" id="matchElapsed">—</span>
+    <span class="v-badge">v<span id="vBadge">0.4</span></span>
   </div>
   <div style="display:flex;gap:6px">
-    <button id="historyBtn" title="View past matches">History (<span id="historyCount">0</span>)</button>
-    <button id="newMatchBtn" title="Reset shots but keep current player names">New Match</button>
+    <button id="historyBtn" title="View past matches">Hist (<span id="historyCount">0</span>)</button>
+    <button id="newMatchBtn" title="Reset shots but keep current player names">New</button>
     <button id="resetBtn" title="Archive current match and start fresh with new players">Reset</button>
   </div>
 </div>
@@ -499,7 +612,6 @@
     </div>
     <div class="live-row idle" id="live0">—</div>
     <ul class="shot-list" id="list0"><li class="empty">No shots yet</li></ul>
-    <button class="expand-toggle" data-pid="0">Show all</button>
     <div class="histogram" id="hist0"></div>
     <div class="hist-labels">
       <span>0-5</span><span>5-10</span><span>10-15</span><span>15-20</span>
@@ -515,7 +627,6 @@
     </div>
     <div class="live-row idle" id="live1">—</div>
     <ul class="shot-list" id="list1"><li class="empty">No shots yet</li></ul>
-    <button class="expand-toggle" data-pid="1">Show all</button>
     <div class="histogram" id="hist1"></div>
     <div class="hist-labels">
       <span>0-5</span><span>5-10</span><span>10-15</span><span>15-20</span>
@@ -524,13 +635,11 @@
   </div>
 </div>
 
-<div class="footer-version">v<span id="vBadge">0.1</span></div>
-
 <div class="controls">
-  <button class="btn-primary" id="primaryBtn">Start shot — Player 1</button>
-  <div class="btn-row">
-    <button class="btn-secondary" id="pauseBtn" disabled>Pause</button>
-    <button class="btn-secondary" id="turnoverBtn">Turn Over</button>
+  <div class="ctrl-row">
+    <button class="ctrl-btn" id="pauseBtn" disabled>Pause</button>
+    <button class="ctrl-btn primary" id="primaryBtn">Start shot</button>
+    <button class="ctrl-btn" id="turnoverBtn">Turn Over</button>
   </div>
 </div>
 
@@ -541,7 +650,7 @@
    ──────────────────────────────────────────────────────────────────── */
 const APP_NAME = 'ShotClock';
 
-const APP_VERSION = window.APP_VERSION || '0.3';
+const APP_VERSION = window.APP_VERSION || '0.4';
 const STORAGE_KEY = 'shotclock_state_v2';
 const STORAGE_KEY_V1 = 'shotclock_state_v1';  /* for migration */
 const TICK_MS = 100;  /* live-counter refresh */
@@ -685,9 +794,26 @@ function togglePause() {
   saveState(); render();
 }
 function turnOver() {
-  /* End any running shot first — the cue-ball strike IS what ended the turn. */
+  /* v0.4: end current shot → flip → auto-start next player's timer.
+     The new player's recorded shot now includes ball-roll + setup time
+     by design (pace-of-play metric, not pure stroke mechanics). */
   if (m().currentShot) endShot();
   m().activeIdx = 1 - m().activeIdx;
+  /* Auto-start new player's shot timer */
+  m().currentShot = {
+    playerIdx: m().activeIdx,
+    startedAt: Date.now(),
+    pausedMs: 0,
+    pausedAt: null
+  };
+  saveState(); render();
+}
+function deleteShotAt(pidx, originalIdx) {
+  /* Used by the swipe-right-to-delete gesture. originalIdx is the index
+     into the original (insertion-order) shots array — NOT the rendered
+     index (rendered is reversed). */
+  if (originalIdx < 0 || originalIdx >= m().players[pidx].shots.length) return;
+  m().players[pidx].shots.splice(originalIdx, 1);
   saveState(); render();
 }
 function undoLastShot(pidx) {
@@ -790,9 +916,9 @@ function renderPlayer(pidx) {
     live.className = 'live-row idle';
   }
 
-  /* Shot list (most-recent-first) */
+  /* Shot list (most-recent-first). data-pid + data-oi (original index)
+     are read by the swipe-delete gesture handler. */
   const list = document.getElementById('list' + pidx);
-  list.classList.toggle('expanded', !!m().expanded[pidx]);
   if (!shots.length) {
     list.innerHTML = '<li class="empty">No shots yet</li>';
   } else {
@@ -801,12 +927,10 @@ function renderPlayer(pidx) {
       const sh = shots[i];
       const sec = sh.ms / 1000;
       items.push(
-        '<li>' +
+        '<li data-pid="' + pidx + '" data-oi="' + i + '">' +
           '<span class="shot-idx">#' + (i + 1) + '</span>' +
           '<span class="shot-time ' + colorForSec(sec) + '">' + fmtSec(sh.ms) + '</span>' +
-          (i === shots.length - 1
-            ? '<button class="undo-shot" data-pid="' + pidx + '" title="Undo last shot">↶</button>'
-            : '<span style="width:24px"></span>') +
+          '<span class="swipe-hint">swipe&nbsp;→</span>' +
         '</li>'
       );
     }
@@ -829,22 +953,23 @@ function renderControls() {
   const primary = document.getElementById('primaryBtn');
   const pauseBtn = document.getElementById('pauseBtn');
   const activeName = m().players[m().activeIdx].name;
+  const shortName = activeName.length > 12 ? activeName.slice(0, 11) + '…' : activeName;
 
   if (!m().currentShot) {
-    primary.className = 'btn-primary';
-    primary.textContent = 'Start shot — ' + activeName;
+    primary.className = 'ctrl-btn primary';
+    primary.innerHTML = 'Start shot<br><small style="font-weight:600;opacity:0.85;font-size:0.74rem">' + escHtml(shortName) + '</small>';
     pauseBtn.disabled = true;
     pauseBtn.classList.remove('pause-active');
     pauseBtn.textContent = 'Pause';
   } else if (shotPaused()) {
-    primary.className = 'btn-primary paused';
-    primary.textContent = 'End shot — ' + activeName + ' (paused)';
+    primary.className = 'ctrl-btn primary paused';
+    primary.innerHTML = 'End shot<br><small style="font-weight:600;opacity:0.85;font-size:0.74rem">' + escHtml(shortName) + ' · paused</small>';
     pauseBtn.disabled = false;
     pauseBtn.classList.add('pause-active');
     pauseBtn.textContent = 'Resume';
   } else {
-    primary.className = 'btn-primary running';
-    primary.textContent = 'End shot — ' + activeName;
+    primary.className = 'ctrl-btn primary running';
+    primary.innerHTML = 'End shot<br><small style="font-weight:600;opacity:0.85;font-size:0.74rem">' + escHtml(shortName) + '</small>';
     pauseBtn.disabled = false;
     pauseBtn.classList.remove('pause-active');
     pauseBtn.textContent = 'Pause';
@@ -1003,17 +1128,107 @@ document.getElementById('player1').addEventListener('click', e => {
   saveState(); render();
 });
 
-/* Delegated handlers for dynamic list buttons */
-document.body.addEventListener('click', e => {
-  if (e.target.matches('.undo-shot')) {
-    const pid = +e.target.dataset.pid;
-    undoLastShot(pid);
-  } else if (e.target.matches('.expand-toggle')) {
-    const pid = +e.target.dataset.pid;
-    m().expanded[pid] = !m().expanded[pid];
-    saveState(); render();
+/* ────── Swipe-right-to-delete (touch + mouse)
+   Per the v0.4 spec: any shot row can be deleted by swiping it right.
+   Replaces the old "undo last" button (which only worked on the most
+   recent shot). Threshold: drag past 40% of the row's width OR ≥120px,
+   whichever is smaller. While dragging, the row translates right and a
+   red "Delete" backdrop bleeds through (CSS ::before). Below threshold
+   on release, snap back. Above threshold, animate out + commit deletion.
+
+   Browser horizontal-scroll / iOS edge-swipe-back conflict: the row's
+   touch-action is pan-y, so the browser knows we want to capture
+   horizontal gestures. Edge-swipe-back is only triggered from the
+   leftmost ~20px of the viewport — the shot list lives inside a column
+   with ≥10px left padding, so we're clear in practice. */
+const SWIPE_TRIGGER_PX = 100;
+let _swipeRow = null, _swipeStartX = 0, _swipeStartY = 0, _swipeDir = null;
+
+function swipeStart(target, x, y) {
+  if (_swipeRow) swipeReset(_swipeRow);
+  const row = target.closest('li[data-pid]');
+  if (!row) return;
+  _swipeRow = row;
+  _swipeStartX = x;
+  _swipeStartY = y;
+  _swipeDir = null;
+  row.classList.add('swiping');
+  row.classList.remove('swipe-anim');
+}
+function swipeMove(x, y) {
+  if (!_swipeRow) return;
+  const dx = x - _swipeStartX;
+  const dy = y - _swipeStartY;
+  /* Lock to horizontal once a direction is committed (5px threshold).
+     If vertical, abandon — user is trying to scroll the list. */
+  if (_swipeDir == null) {
+    if (Math.abs(dx) < 5 && Math.abs(dy) < 5) return;
+    _swipeDir = Math.abs(dx) > Math.abs(dy) ? 'h' : 'v';
+    if (_swipeDir === 'v') { swipeReset(_swipeRow); _swipeRow = null; return; }
   }
+  if (_swipeDir !== 'h') return;
+  /* Only allow right swipe (positive dx). Left swipe snaps back to 0. */
+  const tx = Math.max(0, dx);
+  _swipeRow.style.transform = 'translateX(' + tx + 'px)';
+}
+function swipeEnd() {
+  if (!_swipeRow) return;
+  const row = _swipeRow;
+  _swipeRow = null;
+  if (_swipeDir !== 'h') { swipeReset(row); return; }
+  const tx = parseFloat(row.style.transform.match(/-?\d+\.?\d*/)?.[0] || '0');
+  const trigger = Math.min(SWIPE_TRIGGER_PX, row.offsetWidth * 0.4);
+  if (tx >= trigger) {
+    /* Commit deletion: animate out, then mutate state on transitionend */
+    const pid = +row.dataset.pid;
+    const oi  = +row.dataset.oi;
+    row.classList.remove('swiping');
+    row.classList.add('swipe-anim', 'swipe-gone');
+    row.addEventListener('transitionend', () => {
+      deleteShotAt(pid, oi);
+    }, { once: true });
+    /* Belt + suspenders: if transitionend doesn't fire (some browsers
+       under reduce-motion), still commit after the duration. */
+    setTimeout(() => deleteShotAt(pid, oi), 250);
+  } else {
+    swipeReset(row);
+  }
+}
+function swipeReset(row) {
+  row.classList.remove('swiping');
+  row.classList.add('swipe-anim');
+  row.style.transform = '';
+  setTimeout(() => row.classList.remove('swipe-anim'), 200);
+}
+
+/* Touch */
+document.addEventListener('touchstart', e => {
+  if (!e.target.closest('li[data-pid]')) return;
+  const t = e.touches[0];
+  swipeStart(e.target, t.clientX, t.clientY);
+}, { passive: true });
+document.addEventListener('touchmove', e => {
+  if (!_swipeRow) return;
+  const t = e.touches[0];
+  swipeMove(t.clientX, t.clientY);
+}, { passive: true });
+document.addEventListener('touchend', swipeEnd, { passive: true });
+document.addEventListener('touchcancel', () => {
+  if (_swipeRow) { swipeReset(_swipeRow); _swipeRow = null; }
+}, { passive: true });
+
+/* Mouse (desktop / DeX testing). Pointer events would unify these but
+   we use mouse + touch separately for maximum browser coverage. */
+document.addEventListener('mousedown', e => {
+  if (e.button !== 0) return;
+  if (!e.target.closest('li[data-pid]')) return;
+  swipeStart(e.target, e.clientX, e.clientY);
 });
+document.addEventListener('mousemove', e => {
+  if (!_swipeRow) return;
+  swipeMove(e.clientX, e.clientY);
+});
+document.addEventListener('mouseup', swipeEnd);
 
 /* ────── Boot ────── */
 state = loadState();
