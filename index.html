@@ -488,6 +488,94 @@
   }
 
   /* ──────────────────────────────────────────────────────────────────
+     0.6 GATE OVERLAY — blocks app render until install state is known.
+     Two phases:
+       1. Loading splash (~0–2s) — SPM-branded; while we wait to see if
+          Chrome will fire beforeinstallprompt (~500ms typical) or pass
+          through to "no event" (~2s budget).
+       2. Choice modal — appears if we conclude the PWA is installed
+          but the user is currently in a browser tab. Two actions:
+          "Open in app" (new tab, Chrome 139+ navigation capture routes
+          to PWA window) or "Continue in browser" (remembered forever).
+     Gate is bypassed entirely when:
+       - already running standalone (in the PWA), or
+       - on iOS (no API to detect or launch installed PWA), or
+       - user previously chose "Continue in browser" (persisted), or
+       - beforeinstallprompt fires (NOT installed → install button shows).
+     ────────────────────────────────────────────────────────────────── */
+  .gate {
+    position: fixed; inset: 0; z-index: 200;
+    background: linear-gradient(135deg, var(--spm-primary), var(--spm-accent));
+    color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    padding: 24px;
+    transition: opacity 0.3s ease-out;
+  }
+  .gate[hidden] { display: none; }
+  .gate-card {
+    text-align: center;
+    max-width: 360px;
+    width: 100%;
+  }
+  .gate-icon {
+    width: 88px; height: 88px;
+    margin: 0 auto 16px;
+    display: block;
+    filter: drop-shadow(0 4px 12px rgba(0,0,0,0.25));
+  }
+  .gate h1 {
+    font-size: 1.5rem; font-weight: 800; margin-bottom: 6px;
+    letter-spacing: 0.5px;
+  }
+  .gate .gate-sub {
+    font-size: 0.88rem; opacity: 0.85; margin-bottom: 24px;
+  }
+  .gate-spinner {
+    width: 26px; height: 26px;
+    border: 3px solid rgba(255,255,255,0.25);
+    border-top-color: #fff;
+    border-radius: 50%;
+    margin: 0 auto;
+    animation: gate-spin 0.9s linear infinite;
+  }
+  @keyframes gate-spin { to { transform: rotate(360deg); } }
+  .gate-modal {
+    display: none;
+    background: #fff; color: var(--text);
+    border-radius: 16px; padding: 24px 20px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.35);
+  }
+  .gate.choice .gate-loading { display: none; }
+  .gate.choice .gate-modal { display: block; }
+  .gate-modal h2 {
+    color: var(--spm-accent); font-size: 1.2rem; font-weight: 800;
+    margin-bottom: 8px;
+  }
+  .gate-modal p {
+    color: var(--muted); font-size: 0.88rem; line-height: 1.45;
+    margin-bottom: 16px;
+  }
+  .gate-action {
+    display: block; width: 100%;
+    padding: 14px 12px;
+    border-radius: 10px;
+    font-weight: 800; font-size: 0.96rem;
+    text-decoration: none; text-align: center;
+    cursor: pointer; border: 0;
+    margin-bottom: 8px;
+  }
+  .gate-action.primary {
+    background: var(--spm-accent); color: #fff;
+  }
+  .gate-action.primary:hover { filter: brightness(1.08); }
+  .gate-action.secondary {
+    background: transparent; color: var(--text);
+    border: 1px solid var(--border);
+    margin-bottom: 0;
+  }
+  .gate-action.secondary:hover { background: var(--bg); }
+
+  /* ──────────────────────────────────────────────────────────────────
      OPEN-IN-APP BANNER (0.5.3)
      Shown when we detect the PWA is installed but the user is currently
      in a browser tab (not standalone). The Open button is a real <a>
@@ -608,6 +696,34 @@
 </style>
 </head>
 <body>
+
+<!-- 0.6 GATE: blocks app render until install state is known.
+     Hidden synchronously below if standalone/iOS/previously-chose-browser. -->
+<div class="gate" id="gate">
+  <div class="gate-card">
+    <div class="gate-loading">
+      <!-- Embedded brand icon (matches icon.svg so the splash looks like the app) -->
+      <svg class="gate-icon" viewBox="0 0 192 192" xmlns="http://www.w3.org/2000/svg">
+        <rect width="192" height="192" rx="40" fill="rgba(255,255,255,0.15)"/>
+        <circle cx="96" cy="110" r="64" fill="#fff"/>
+        <circle cx="96" cy="110" r="56" fill="var(--spm-accent)" style="fill:#0031a1"/>
+        <line x1="96" y1="110" x2="96" y2="68" stroke="#fff" stroke-width="5" stroke-linecap="round"/>
+        <line x1="96" y1="110" x2="122" y2="92" stroke="#fff" stroke-width="4" stroke-linecap="round"/>
+        <circle cx="96" cy="110" r="7" fill="#ea002a"/>
+      </svg>
+      <h1>ShotClock</h1>
+      <div class="gate-sub">Checking install state…</div>
+      <div class="gate-spinner" role="progressbar" aria-label="Loading"></div>
+    </div>
+
+    <div class="gate-modal">
+      <h2>ShotClock is installed</h2>
+      <p>Open in the installed app for a full-screen experience, or stay in this browser tab.</p>
+      <a class="gate-action primary" id="gateOpenApp" href="./" target="_blank" rel="noopener">📱 Open in app</a>
+      <button class="gate-action secondary" id="gateStayBrowser" type="button">Continue in browser</button>
+    </div>
+  </div>
+</div>
 
 <div class="header">
   <h1 id="appName">ShotClock</h1>
@@ -755,12 +871,89 @@
 
 <script>
 /* ────────────────────────────────────────────────────────────────────
+   0.6 GATE — synchronous decision: show gate or render immediately.
+   Runs FIRST (before any other state) so the loading splash covers
+   the app from the very first paint. The gate must hide as fast as
+   possible in the common "no gate needed" cases.
+   ──────────────────────────────────────────────────────────────────── */
+const GATE_TIMEOUT_MS = 2000;   /* upper bound for waiting for bipEvent */
+let _gateDecided = false;
+let _gateDecisionResolve = null;
+
+function gateHide() {
+  if (_gateDecided) return;
+  _gateDecided = true;
+  const g = document.getElementById('gate');
+  if (!g) return;
+  g.style.opacity = '0';
+  setTimeout(() => { g.hidden = true; }, 300);
+}
+function gateShowChoice() {
+  if (_gateDecided) return;
+  document.getElementById('gate').classList.add('choice');
+}
+
+/* Synchronous bypass: standalone, iOS, or prior "continue in browser" */
+(function gateSyncDecision() {
+  try {
+    const standalone = window.matchMedia('(display-mode: standalone)').matches
+                    || window.navigator.standalone === true;
+    if (standalone) { gateHide(); return; }
+    const ios = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+    if (ios) { gateHide(); return; }
+    const raw = localStorage.getItem('shotclock_install_v1');
+    if (raw) {
+      const s = JSON.parse(raw);
+      if (s && (s.preferBrowser === true || s.dismissedForever === true)) {
+        gateHide();
+        return;
+      }
+    }
+  } catch (_) { /* on any error, fall through to async wait */ }
+  /* Otherwise wait: bipEvent firing → hide gate (NOT installed),
+     timeout → show choice modal (likely installed). */
+  setTimeout(() => {
+    if (_gateDecided) return;
+    gateShowChoice();
+  }, GATE_TIMEOUT_MS);
+})();
+
+/* Gate choice button wiring (set up synchronously so they're ready
+   when the modal becomes visible). */
+window.addEventListener('DOMContentLoaded', () => {
+  const stay = document.getElementById('gateStayBrowser');
+  const open = document.getElementById('gateOpenApp');
+  if (stay) {
+    stay.addEventListener('click', () => {
+      try {
+        const raw = localStorage.getItem('shotclock_install_v1');
+        const s = raw ? JSON.parse(raw) : {};
+        s.preferBrowser = true;
+        localStorage.setItem('shotclock_install_v1', JSON.stringify(s));
+      } catch (_) {}
+      gateHide();
+    });
+  }
+  if (open) {
+    /* The <a target="_blank"> opens a new tab. Chrome 139+ navigation
+       capturing routes that tab to the installed PWA. The current
+       browser tab continues to load the app (so user has both contexts
+       if they want them). Hide the gate so the user can use the app
+       in this tab too. */
+    open.addEventListener('click', () => {
+      /* don't preventDefault — let the <a> open the new tab */
+      setTimeout(gateHide, 50);  /* small delay so new tab opens first */
+    });
+  }
+});
+
+/* ────────────────────────────────────────────────────────────────────
    APP IDENTITY — change in ONE place to rebrand everywhere.
    All user-visible "ShotClock" strings hydrate from this constant.
    ──────────────────────────────────────────────────────────────────── */
 const APP_NAME = 'ShotClock';
 
-const APP_VERSION = window.APP_VERSION || '0.5.3';
+const APP_VERSION = window.APP_VERSION || '0.6';
 const STORAGE_KEY = 'shotclock_state_v2';
 const STORAGE_KEY_V1 = 'shotclock_state_v1';  /* for migration */
 const TICK_MS = 100;  /* live-counter refresh */
@@ -1299,8 +1492,11 @@ window.addEventListener('beforeinstallprompt', e => {
   /* Prevent Chrome's mini-infobar; we'll show our own UI. */
   e.preventDefault();
   _bipEvent = e;
+  /* bipEvent firing = PWA is NOT installed → hide the gate immediately;
+     the app renders normally with the Install button visible. */
+  gateHide();
   updateInstallButton();
-  updateOpenInAppBanner();  /* hide banner — bipEvent firing = NOT installed */
+  updateOpenInAppBanner();
 });
 
 window.addEventListener('appinstalled', () => {
