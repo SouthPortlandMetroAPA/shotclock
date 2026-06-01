@@ -488,6 +488,38 @@
   }
 
   /* ──────────────────────────────────────────────────────────────────
+     OPEN-IN-APP BANNER (0.5.3)
+     Shown when we detect the PWA is installed but the user is currently
+     in a browser tab (not standalone). The Open button is a real <a>
+     link with target="_blank" so Chrome 139+ navigation capturing can
+     route it to the installed PWA window. On older Chrome / Android it
+     gracefully opens a fresh browser tab.
+     ────────────────────────────────────────────────────────────────── */
+  .open-in-app {
+    flex-shrink: 0;
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 12px;
+    background: var(--spm-accent); color: #fff;
+    font-size: 0.84rem; font-weight: 700;
+  }
+  .open-in-app[hidden] { display: none; }
+  .open-in-app .msg { flex: 1; line-height: 1.25; }
+  .open-in-app .open-btn {
+    background: #fff; color: var(--spm-accent);
+    border: 0; border-radius: 8px;
+    padding: 7px 14px; font-weight: 800; font-size: 0.84rem;
+    text-decoration: none;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .open-in-app .dismiss-btn {
+    background: none; color: rgba(255,255,255,0.7); border: 0;
+    font-size: 1.4rem; line-height: 1; padding: 2px 8px;
+    cursor: pointer;
+  }
+  .open-in-app .dismiss-btn:hover { color: #fff; }
+
+  /* ──────────────────────────────────────────────────────────────────
      HISTORY MODAL — list of archived matches with expandable details.
      ────────────────────────────────────────────────────────────────── */
   .modal-backdrop {
@@ -580,6 +612,14 @@
 <div class="header">
   <h1 id="appName">ShotClock</h1>
   <div class="sub">Tap to time. Tap again to record.</div>
+</div>
+
+<!-- Open-in-app banner — shown when PWA is installed but we're in browser. -->
+<div class="open-in-app" id="openInAppBanner" hidden>
+  <span class="msg">📱 ShotClock is installed</span>
+  <!-- target=_blank so Chrome 139+ navigation capturing can route to PWA -->
+  <a class="open-btn" id="openInAppBtn" href="./" target="_blank" rel="noopener">Open in app</a>
+  <button class="dismiss-btn" id="openInAppDismiss" aria-label="Dismiss" title="Don't show again">×</button>
 </div>
 
 <div class="top-bar">
@@ -720,7 +760,7 @@
    ──────────────────────────────────────────────────────────────────── */
 const APP_NAME = 'ShotClock';
 
-const APP_VERSION = window.APP_VERSION || '0.5.2';
+const APP_VERSION = window.APP_VERSION || '0.5.3';
 const STORAGE_KEY = 'shotclock_state_v2';
 const STORAGE_KEY_V1 = 'shotclock_state_v1';  /* for migration */
 const TICK_MS = 100;  /* live-counter refresh */
@@ -1178,7 +1218,12 @@ if ('serviceWorker' in navigator) {
      3) localStorage flag         → user-confirmed install OR dismissed-forever
 */
 let _bipEvent = null;
-let _installState = { installed: false, dismissedForever: false, firstPromptShown: false };
+let _installState = {
+  installed: false,
+  dismissedForever: false,
+  firstPromptShown: false,
+  openInAppDismissed: false  /* 0.5.3 */
+};
 try {
   const raw = localStorage.getItem('shotclock_install_v1');
   if (raw) _installState = { ..._installState, ...JSON.parse(raw) };
@@ -1202,25 +1247,60 @@ function isAndroidChromium() {
 function updateInstallButton() {
   const btn = document.getElementById('installBtn');
   if (!btn) return;
-  /* Hide if running standalone (already installed AND launched from home
-     screen) or the user explicitly dismissed forever. */
+  /* Hide if already in standalone or dismissed-forever. */
   if (isStandalone() || _installState.dismissedForever) {
     btn.hidden = true;
     return;
   }
-  /* 0.5.1: also show on any non-iOS device that doesn't have bipEvent.
-     Chrome's beforeinstallprompt is unreliable — it may not fire on a
-     device that previously installed and uninstalled the PWA, until
-     engagement rebuilds. Always show the button; the modal picks the
-     right body (native one-tap, iOS Share path, or manual menu path). */
-  btn.hidden = false;
+  /* 0.5.3 revision: treat absence of bipEvent as a "probably already
+     installed" signal (the user's observation, confirmed by research).
+     So: show Install button only when bipEvent IS captured, OR on iOS
+     (which has no equivalent signal). When bipEvent is absent on
+     Android/desktop, the Open-in-app banner handles the relevant UX
+     instead — see updateOpenInAppBanner(). */
+  if (_bipEvent) { btn.hidden = false; return; }
+  if (isIOS())   { btn.hidden = false; return; }
+  btn.hidden = true;
 }
+
+/* ────── Open-in-app banner (0.5.3) ──────
+   Detection layered: not standalone + not iOS + no bipEvent after a
+   3s grace window = "PWA is installed but currently in browser tab".
+   On a real install, Chrome stops firing beforeinstallprompt, so its
+   absence (combined with eligibility being otherwise met) is the
+   strongest available signal short of getInstalledRelatedApps() which
+   needs manifest tweaks. */
+let _bipFireCheckRan = false;
+
+function updateOpenInAppBanner() {
+  const banner = document.getElementById('openInAppBanner');
+  if (!banner) return;
+  /* Never show if in PWA, on iOS, dismissed-forever, or beforeinstallprompt
+     IS available (which means NOT installed — show the install button instead). */
+  if (isStandalone()) { banner.hidden = true; return; }
+  if (isIOS())        { banner.hidden = true; return; }
+  if (_bipEvent)      { banner.hidden = true; return; }
+  if (_installState.openInAppDismissed) { banner.hidden = true; return; }
+  /* All conditions met → show */
+  banner.hidden = false;
+}
+
+/* After a 3s grace period, if beforeinstallprompt still hasn't fired,
+   reveal the banner. This avoids flashing it during the brief window
+   between page load and Chrome firing the event for a NOT-installed
+   eligible app. */
+setTimeout(() => {
+  _bipFireCheckRan = true;
+  updateOpenInAppBanner();
+  updateInstallButton();
+}, 3000);
 
 window.addEventListener('beforeinstallprompt', e => {
   /* Prevent Chrome's mini-infobar; we'll show our own UI. */
   e.preventDefault();
   _bipEvent = e;
   updateInstallButton();
+  updateOpenInAppBanner();  /* hide banner — bipEvent firing = NOT installed */
 });
 
 window.addEventListener('appinstalled', () => {
@@ -1229,6 +1309,7 @@ window.addEventListener('appinstalled', () => {
   saveInstallState();
   closeInstallModal();
   updateInstallButton();
+  updateOpenInAppBanner();
 });
 
 function openInstallModal() {
@@ -1479,13 +1560,29 @@ document.addEventListener('mouseup', swipeEnd);
 state = loadState();
 render();
 updateInstallButton();
+/* Banner stays hidden initially; the 3s setTimeout above reveals it
+   if beforeinstallprompt hasn't fired by then. */
 
-/* Re-evaluate install-button visibility if the display mode changes
-   (user installs while page is open, or returns from standalone to
-   browser tab) — covers the edge case where Chrome's install completes
-   via the address-bar menu while the page is still open. */
+/* Open-in-app banner: dismiss button sets the "never show again" flag. */
+document.getElementById('openInAppDismiss').addEventListener('click', () => {
+  _installState.openInAppDismissed = true;
+  saveInstallState();
+  updateOpenInAppBanner();
+});
+/* The "Open in app" link is a real <a target=_blank> — Chrome 139+
+   navigation capturing routes the new-tab navigation to the installed
+   PWA. On older Chrome or Android, it just opens a new browser tab
+   (graceful degradation). We DO want this to remain a real anchor and
+   not intercept the click. */
+
+/* Re-evaluate install-button + banner visibility if the display mode
+   changes (user installs while page is open, or returns from standalone
+   to browser tab). */
 try {
-  window.matchMedia('(display-mode: standalone)').addEventListener('change', updateInstallButton);
+  window.matchMedia('(display-mode: standalone)').addEventListener('change', () => {
+    updateInstallButton();
+    updateOpenInAppBanner();
+  });
 } catch (_) { /* older browsers — silently ignore */ }
 </script>
 </body>
