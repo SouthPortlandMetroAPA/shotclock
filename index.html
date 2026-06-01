@@ -630,6 +630,27 @@
       </button>
     </div>
 
+    <!-- Fallback for Android Chromium when beforeinstallprompt hasn't fired yet
+         (eligibility warmup, already-installed Chrome state, dismissed-infobar
+         suppression, etc.). User can still install manually via the browser
+         menu — we just give them the path. -->
+    <div id="installBodyManual" hidden>
+      <p style="margin-bottom:10px;font-size:0.92rem">
+        Your browser hasn't offered me a one-tap install button yet (sometimes
+        Chrome needs a couple of visits to "warm up," or the app is already
+        installed). You can install manually:
+      </p>
+      <ol style="padding-left:22px;font-size:0.9rem;line-height:1.6;margin-bottom:14px">
+        <li>Tap the <strong>⋮</strong> menu in the top-right of your browser.</li>
+        <li>Look for <strong>Install app</strong>, <strong>Add to Home screen</strong>, or <strong>Open ShotClock</strong> (if it's already installed).</li>
+        <li>Confirm.</li>
+      </ol>
+      <button class="btn-secondary" id="installManualDoneBtn"
+        style="width:100%;padding:12px;background:var(--spm-accent);color:#fff;border:0;border-radius:10px;font-weight:800;font-size:0.95rem;cursor:pointer">
+        I've added it — don't show this again
+      </button>
+    </div>
+
     <div style="display:flex;gap:8px;margin-top:12px;font-size:0.85rem">
       <button class="install-action" id="installLaterBtn"
         style="flex:1;background:none;border:1px solid var(--border);color:var(--muted);padding:10px;border-radius:8px;cursor:pointer">
@@ -699,7 +720,7 @@
    ──────────────────────────────────────────────────────────────────── */
 const APP_NAME = 'ShotClock';
 
-const APP_VERSION = window.APP_VERSION || '0.5';
+const APP_VERSION = window.APP_VERSION || '0.5.1';
 const STORAGE_KEY = 'shotclock_state_v2';
 const STORAGE_KEY_V1 = 'shotclock_state_v1';  /* for migration */
 const TICK_MS = 100;  /* live-counter refresh */
@@ -1181,17 +1202,18 @@ function isAndroidChromium() {
 function updateInstallButton() {
   const btn = document.getElementById('installBtn');
   if (!btn) return;
-  /* Hide if running installed, dismissed-forever, or installed flag set */
-  if (isStandalone() || _installState.installed || _installState.dismissedForever) {
+  /* Hide if running standalone (already installed AND launched from home
+     screen) or the user explicitly dismissed forever. */
+  if (isStandalone() || _installState.dismissedForever) {
     btn.hidden = true;
     return;
   }
-  /* Chrome path requires we captured a beforeinstallprompt event */
-  if (_bipEvent) { btn.hidden = false; return; }
-  /* iOS path: always offer the instructions modal */
-  if (isIOS()) { btn.hidden = false; return; }
-  /* Other browsers: hide */
-  btn.hidden = true;
+  /* 0.5.1: also show on any non-iOS device that doesn't have bipEvent.
+     Chrome's beforeinstallprompt is unreliable — it may not fire on a
+     device that previously installed and uninstalled the PWA, until
+     engagement rebuilds. Always show the button; the modal picks the
+     right body (native one-tap, iOS Share path, or manual menu path). */
+  btn.hidden = false;
 }
 
 window.addEventListener('beforeinstallprompt', e => {
@@ -1210,8 +1232,14 @@ window.addEventListener('appinstalled', () => {
 });
 
 function openInstallModal() {
-  document.getElementById('installBodyAndroid').hidden = !( _bipEvent && !isIOS() );
-  document.getElementById('installBodyIos').hidden = !isIOS();
+  /* Pick the right body for the current device/browser state.
+     Priority: native bipEvent (Chrome with one-tap install) → iOS Share
+     path → manual menu instructions (Android/desktop without bipEvent). */
+  const ios = isIOS();
+  const nativeAvail = !!_bipEvent && !ios;
+  document.getElementById('installBodyAndroid').hidden = !nativeAvail;
+  document.getElementById('installBodyIos').hidden = !ios;
+  document.getElementById('installBodyManual').hidden = nativeAvail || ios;
   document.getElementById('installModal').hidden = false;
 }
 function closeInstallModal() {
@@ -1273,6 +1301,12 @@ document.getElementById('installModal').addEventListener('click', e => {
 });
 document.getElementById('installAcceptBtn').addEventListener('click', triggerNativeInstall);
 document.getElementById('installIosDoneBtn').addEventListener('click', () => {
+  _installState.installed = true;
+  saveInstallState();
+  closeInstallModal();
+  updateInstallButton();
+});
+document.getElementById('installManualDoneBtn').addEventListener('click', () => {
   _installState.installed = true;
   saveInstallState();
   closeInstallModal();
