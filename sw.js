@@ -24,7 +24,7 @@
    compares the new SW against the cached one byte-for-byte). Without
    this, identical sw.js bytes = no perceived update.
    ════════════════════════════════════════════════════════════════════════ */
-const VERSION = '0.6';
+const VERSION = '0.6.1';
 const CACHE_NAME = 'shotclock-' + VERSION;
 const SHELL = [
   './',
