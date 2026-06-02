@@ -114,15 +114,33 @@
 
   .top-bar {
     display: flex; justify-content: space-between; align-items: center;
-    padding: 8px 12px; background: var(--card); border-bottom: 1px solid var(--border);
+    padding: 6px 12px; background: var(--card); border-bottom: 1px solid var(--border);
+    gap: 8px; flex-wrap: nowrap;
   }
+  .top-bar-left  { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+  .top-bar-right { display: flex; gap: 6px; flex-shrink: 0; }
   .match-elapsed { font-size: 0.78rem; color: var(--muted); font-weight: 600; }
+  .match-meta { display: flex; gap: 4px; align-items: center; }
+  .meta-input {
+    border: 1px solid var(--border); border-radius: 6px;
+    padding: 3px 6px; font-size: 0.72rem;
+    background: var(--card); color: var(--text);
+    width: 110px; outline: none;
+    font-variant-numeric: tabular-nums;
+  }
+  .meta-input.meta-narrow { width: 56px; }
+  .meta-input:focus { border-color: var(--spm-accent); }
   .top-bar button {
     background: none; border: 1px solid var(--border); color: var(--muted);
     padding: 5px 10px; border-radius: 6px;
     font-size: 0.74rem; font-weight: 600; cursor: pointer;
   }
   .top-bar button:active { background: var(--bg); }
+  /* Very-narrow phones: stack the meta inputs into a second row */
+  @media (max-width: 480px) {
+    .meta-input { width: 88px; }
+    .meta-input.meta-narrow { width: 48px; }
+  }
 
   .players-row {
     display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
@@ -162,8 +180,28 @@
   .player-meta {
     display: flex; justify-content: space-between;
     font-size: 0.72rem; color: var(--muted);
-    margin: 6px 0 8px; padding: 0 2px;
+    margin: 6px 0 4px; padding: 0 2px;
   }
+  /* 0.7+: three averages stacked in a 3-column compact row */
+  .avg-row {
+    display: grid; grid-template-columns: 1fr 1fr 1fr;
+    gap: 4px; margin-bottom: 8px;
+  }
+  .avg-cell {
+    display: flex; flex-direction: column; align-items: center;
+    background: var(--bg); border-radius: 6px;
+    padding: 3px 2px;
+    line-height: 1.1;
+  }
+  .avg-cell label {
+    font-size: 0.58rem; color: var(--muted); font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.4px;
+  }
+  .avg-cell span {
+    font-size: 0.82rem; font-weight: 800; color: var(--text);
+    font-variant-numeric: tabular-nums;
+  }
+  .avg-cell.star-cell label { color: var(--warn); }
   .avg-pill {
     font-weight: 800; color: var(--text);
     font-variant-numeric: tabular-nums;
@@ -248,7 +286,8 @@
 
   .histogram {
     display: grid;
-    grid-template-columns: repeat(9, 1fr);
+    /* 9 time bins + 10th star bin (a bit narrower since it's a separate metric) */
+    grid-template-columns: repeat(9, 1fr) 0.9fr;
     align-items: end;
     gap: 2px;
     height: 60px;
@@ -266,16 +305,28 @@
   .hbar.g { background: var(--success); }
   .hbar.y { background: var(--warn); }
   .hbar.r { background: var(--danger); }
+  /* Star-count bar — distinct color (SPM accent navy) so it doesn't read
+     as another time category. Visually separated from time bins by a
+     left border. */
+  .hbar.star {
+    background: var(--spm-accent);
+    border-left: 2px solid var(--border);
+    border-radius: 3px 3px 0 0;
+    margin-left: 4px;
+  }
   .hbar .n {
     position: absolute; top: -14px; left: 0; right: 0;
     text-align: center; font-size: 0.62rem; font-weight: 700;
     color: var(--text);
   }
   .hist-labels {
-    display: grid; grid-template-columns: repeat(9, 1fr);
+    display: grid; grid-template-columns: repeat(9, 1fr) 0.9fr;
     gap: 2px; margin-top: 4px;
     font-size: 0.52rem; color: var(--muted);
     text-align: center;
+  }
+  .hist-labels .star-label {
+    color: var(--spm-accent); font-weight: 700;
   }
 
   /* Controls: three equal-width buttons in a single row, sticky to the
@@ -292,9 +343,24 @@
   }
   .ctrl-row {
     display: grid;
-    grid-template-columns: 1fr 1fr 1fr;
-    gap: 8px;
+    grid-template-columns: 1fr 1.4fr 1fr 0.6fr;  /* Pause | Start/Stop (wider) | Turn Over | ★ */
+    gap: 6px;
   }
+  /* Star button — narrow, icon-only, slightly distinct */
+  .ctrl-btn.star {
+    padding: 16px 6px;
+    font-size: 1.3rem;
+    color: var(--muted);
+    background: var(--card);
+    border: 1px solid var(--border);
+  }
+  .ctrl-btn.star[disabled] { opacity: 0.35; }
+  .ctrl-btn.star.starred {
+    background: var(--warn);
+    color: #fff;
+    border-color: var(--warn);
+  }
+  .ctrl-btn.star.starred:not([disabled]) { box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.25); }
   .ctrl-btn {
     background: var(--card); color: var(--text);
     border: 1px solid var(--border);
@@ -727,12 +793,17 @@
   }
   .history-shots li:last-child { border-bottom: 0; }
   .history-delete {
-    margin-top: 8px;
     background: none; border: 1px solid var(--border);
     color: var(--danger); font-size: 0.78rem; font-weight: 700;
     padding: 5px 10px; border-radius: 6px; cursor: pointer;
   }
   .history-delete:hover { background: #fff5f5; }
+  .history-share {
+    background: var(--spm-accent); border: 0;
+    color: #fff; font-size: 0.78rem; font-weight: 700;
+    padding: 5px 12px; border-radius: 6px; cursor: pointer;
+  }
+  .history-share:hover { filter: brightness(1.08); }
 </style>
 </head>
 <body>
@@ -779,11 +850,16 @@
 </div>
 
 <div class="top-bar">
-  <div>
-    <span class="match-elapsed" id="matchElapsed">—</span>
-    <span class="v-badge">v<span id="vBadge">0.4</span></span>
+  <div class="top-bar-left">
+    <div class="match-elapsed" id="matchElapsed">—</div>
+    <div class="match-meta">
+      <input type="text" id="matchName"   class="meta-input" placeholder="Match name…"   maxlength="40" autocomplete="off">
+      <input type="text" id="matchNumber" class="meta-input meta-narrow" placeholder="Match #" maxlength="10" autocomplete="off">
+      <input type="text" id="tableNumber" class="meta-input meta-narrow" placeholder="Tbl #"   maxlength="6"  autocomplete="off">
+    </div>
+    <div class="v-badge">v<span id="vBadge">0.7</span></div>
   </div>
-  <div style="display:flex;gap:6px">
+  <div class="top-bar-right">
     <button id="installBtn" title="Install to home screen" hidden>⊕ Install</button>
     <button id="historyBtn" title="View past matches">Hist (<span id="historyCount">0</span>)</button>
     <button id="newMatchBtn" title="Reset shots but keep current player names">New</button>
@@ -959,14 +1035,19 @@
     <input class="player-name" id="name0" maxlength="20" value="Player 1" aria-label="Player 1 name">
     <div class="player-meta">
       <span>Shots: <span class="shots-count" id="count0">0</span></span>
-      <span>Avg: <span class="avg-pill" id="avg0">—</span></span>
+      <span>★ <span class="shots-count" id="starCount0">0</span></span>
+    </div>
+    <div class="avg-row" id="avgRow0">
+      <span class="avg-cell"><label>Avg</label><span id="avg0">—</span></span>
+      <span class="avg-cell star-cell"><label>★ Avg</label><span id="avgStar0">—</span></span>
+      <span class="avg-cell"><label>Plain Avg</label><span id="avgPlain0">—</span></span>
     </div>
     <div class="live-row idle" id="live0">—</div>
     <ul class="shot-list" id="list0"><li class="empty">No shots yet</li></ul>
     <div class="histogram" id="hist0"></div>
     <div class="hist-labels">
       <span>0-5</span><span>5-10</span><span>10-15</span><span>15-20</span>
-      <span>20-25</span><span>25-30</span><span>30-45</span><span>45-60</span><span>60+</span>
+      <span>20-25</span><span>25-30</span><span>30-45</span><span>45-60</span><span>60+</span><span class="star-label">★</span>
     </div>
   </div>
 
@@ -974,14 +1055,19 @@
     <input class="player-name" id="name1" maxlength="20" value="Player 2" aria-label="Player 2 name">
     <div class="player-meta">
       <span>Shots: <span class="shots-count" id="count1">0</span></span>
-      <span>Avg: <span class="avg-pill" id="avg1">—</span></span>
+      <span>★ <span class="shots-count" id="starCount1">0</span></span>
+    </div>
+    <div class="avg-row" id="avgRow1">
+      <span class="avg-cell"><label>Avg</label><span id="avg1">—</span></span>
+      <span class="avg-cell star-cell"><label>★ Avg</label><span id="avgStar1">—</span></span>
+      <span class="avg-cell"><label>Plain Avg</label><span id="avgPlain1">—</span></span>
     </div>
     <div class="live-row idle" id="live1">—</div>
     <ul class="shot-list" id="list1"><li class="empty">No shots yet</li></ul>
     <div class="histogram" id="hist1"></div>
     <div class="hist-labels">
       <span>0-5</span><span>5-10</span><span>10-15</span><span>15-20</span>
-      <span>20-25</span><span>25-30</span><span>30-45</span><span>45-60</span><span>60+</span>
+      <span>20-25</span><span>25-30</span><span>30-45</span><span>45-60</span><span>60+</span><span class="star-label">★</span>
     </div>
   </div>
 </div>
@@ -991,6 +1077,7 @@
     <button class="ctrl-btn" id="pauseBtn" disabled>Pause</button>
     <button class="ctrl-btn primary" id="primaryBtn">Start shot</button>
     <button class="ctrl-btn" id="turnoverBtn">Turn Over</button>
+    <button class="ctrl-btn star" id="starBtn" disabled title="Mark current shot as special (only during a running shot)">★</button>
   </div>
 </div>
 
@@ -1078,7 +1165,7 @@ window.addEventListener('DOMContentLoaded', () => {
    ──────────────────────────────────────────────────────────────────── */
 const APP_NAME = 'ShotClock';
 
-const APP_VERSION = window.APP_VERSION || '0.6.1';
+const APP_VERSION = window.APP_VERSION || '0.7';
 const STORAGE_KEY = 'shotclock_state_v2';
 const STORAGE_KEY_V1 = 'shotclock_state_v1';  /* for migration */
 const TICK_MS = 100;  /* live-counter refresh */
@@ -1125,11 +1212,16 @@ function newMatchObj() {
     id: 'm_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6),
     startedAt: Date.now(),
     endedAt: null,
+    /* 0.7+: per-match metadata. All optional. */
+    match_name:   '',
+    match_number: '',
+    table_number: '',
     players: [
       { name: 'Player 1', shots: [] },
       { name: 'Player 2', shots: [] }
     ],
     activeIdx: 0,
+    /* currentShot: { playerIdx, startedAt, pausedMs, pausedAt, starred } */
     currentShot: null,
     expanded: [false, false]
   };
@@ -1199,7 +1291,8 @@ function startShot() {
     playerIdx: m().activeIdx,
     startedAt: Date.now(),
     pausedMs: 0,
-    pausedAt: null
+    pausedAt: null,
+    starred: false   /* 0.7+: toggled mid-shot via the ★ button */
   };
   saveState(); render();
 }
@@ -1207,8 +1300,17 @@ function endShot() {
   if (!m().currentShot) return;
   const ms = currentShotElapsedMs();
   const idx = m().currentShot.playerIdx;
-  m().players[idx].shots.push({ ms, endedAt: Date.now() });
+  const starred = !!m().currentShot.starred;
+  m().players[idx].shots.push({ ms, endedAt: Date.now(), starred: starred });
   m().currentShot = null;
+  saveState(); render();
+}
+/* 0.7: star toggle — only meaningful while a shot is currently running
+   (paused or active). After endShot the flag is locked into the recorded
+   shot row. */
+function toggleStar() {
+  if (!m().currentShot) return;
+  m().currentShot.starred = !m().currentShot.starred;
   saveState(); render();
 }
 function togglePause() {
@@ -1229,6 +1331,7 @@ function turnOver() {
   m().activeIdx = 1 - m().activeIdx;
   /* Auto-start new player's shot timer */
   m().currentShot = {
+    starred: false,
     playerIdx: m().activeIdx,
     startedAt: Date.now(),
     pausedMs: 0,
@@ -1310,15 +1413,30 @@ function fmtDateTime(epoch) {
   const d = new Date(epoch);
   return d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 }
+/* 0.7+: returns { overall, star, plain, starCount, totalCount } in ms.
+   Any avg can be null if the relevant subset is empty. */
+function statsForShots(shots) {
+  const n = shots.length;
+  if (!n) return { overall: null, star: null, plain: null, starCount: 0, totalCount: 0 };
+  let sum = 0, starSum = 0, plainSum = 0, starN = 0, plainN = 0;
+  for (const s of shots) {
+    sum += s.ms;
+    if (s.starred) { starSum += s.ms; starN++; }
+    else           { plainSum += s.ms; plainN++; }
+  }
+  return {
+    overall: sum / n,
+    star:   starN  ? starSum  / starN  : null,
+    plain:  plainN ? plainSum / plainN : null,
+    starCount: starN,
+    totalCount: n
+  };
+}
 function avgForPlayer(pidx) {
-  const shots = m().players[pidx].shots;
-  if (!shots.length) return null;
-  return shots.reduce((a, b) => a + b.ms, 0) / shots.length;
+  return statsForShots(m().players[pidx].shots);
 }
 function avgForArchivedPlayer(matchObj, pidx) {
-  const shots = matchObj.players[pidx].shots;
-  if (!shots.length) return null;
-  return shots.reduce((a, b) => a + b.ms, 0) / shots.length;
+  return statsForShots(matchObj.players[pidx].shots);
 }
 
 /* ────── Rendering ────── */
@@ -1330,22 +1448,28 @@ function renderPlayer(pidx) {
   document.getElementById('name' + pidx).value = m().players[pidx].name;
 
   const shots = m().players[pidx].shots;
-  document.getElementById('count' + pidx).textContent = shots.length;
-  const avgMs = avgForPlayer(pidx);
-  document.getElementById('avg' + pidx).textContent = avgMs == null ? '—' : fmtSec(avgMs);
+  const stats = statsForShots(shots);
+  document.getElementById('count'     + pidx).textContent = stats.totalCount;
+  document.getElementById('starCount' + pidx).textContent = stats.starCount;
+  document.getElementById('avg'       + pidx).textContent = stats.overall == null ? '—' : fmtSec(stats.overall);
+  document.getElementById('avgStar'   + pidx).textContent = stats.star    == null ? '—' : fmtSec(stats.star);
+  document.getElementById('avgPlain'  + pidx).textContent = stats.plain   == null ? '—' : fmtSec(stats.plain);
 
-  /* Live row — only shows the live elapsed for the ACTIVE player's running shot */
+  /* Live row — only shows the live elapsed for the ACTIVE player's running shot.
+     0.7: append a ★ marker if the running shot has been starred. */
   const live = document.getElementById('live' + pidx);
   if (isActive && m().currentShot && m().currentShot.playerIdx === pidx) {
-    live.textContent = fmtLive(currentShotElapsedMs());
-    live.className = 'live-row ' + (shotPaused() ? 'paused' : '');
+    const starMark = m().currentShot.starred ? ' ★' : '';
+    live.textContent = fmtLive(currentShotElapsedMs()) + starMark;
+    live.className = 'live-row ' + (shotPaused() ? 'paused' : '') + (m().currentShot.starred ? ' starred' : '');
   } else {
     live.textContent = '—';
     live.className = 'live-row idle';
   }
 
   /* Shot list (most-recent-first). data-pid + data-oi (original index)
-     are read by the swipe-delete gesture handler. */
+     are read by the swipe-delete gesture handler. 0.7: append ★ to
+     starred shots so scan order shows specials at a glance. */
   const list = document.getElementById('list' + pidx);
   if (!shots.length) {
     list.innerHTML = '<li class="empty">No shots yet</li>';
@@ -1354,10 +1478,11 @@ function renderPlayer(pidx) {
     for (let i = shots.length - 1; i >= 0; i--) {
       const sh = shots[i];
       const sec = sh.ms / 1000;
+      const starMark = sh.starred ? ' <span style="color:var(--warn)">★</span>' : '';
       items.push(
         '<li data-pid="' + pidx + '" data-oi="' + i + '">' +
           '<span class="shot-idx">#' + (i + 1) + '</span>' +
-          '<span class="shot-time ' + colorForSec(sec) + '">' + fmtSec(sh.ms) + '</span>' +
+          '<span class="shot-time ' + colorForSec(sec) + '">' + fmtSec(sh.ms) + starMark + '</span>' +
           '<span class="swipe-hint">swipe&nbsp;→</span>' +
         '</li>'
       );
@@ -1365,21 +1490,34 @@ function renderPlayer(pidx) {
     list.innerHTML = items.join('');
   }
 
-  /* Histogram */
+  /* Histogram — 9 time bins (NON-STAR shots only) + 10th ★ bar (star count).
+     Per the v0.7 spec, starred shots leave the time bins entirely so the
+     bins reflect "normal pace" matching the plain-avg metric. */
   const counts = BINS.map(() => 0);
-  for (const sh of shots) counts[binIndexForSec(sh.ms / 1000)]++;
-  const maxCount = Math.max(1, ...counts);
+  for (const sh of shots) {
+    if (sh.starred) continue;
+    counts[binIndexForSec(sh.ms / 1000)]++;
+  }
+  /* Star bar uses the SAME max-scale as time bins so visual heights
+     are comparable. */
+  const maxCount = Math.max(1, ...counts, stats.starCount);
   const hist = document.getElementById('hist' + pidx);
-  hist.innerHTML = counts.map((n, i) => {
+  let html = counts.map((n, i) => {
     const heightPct = (n / maxCount) * 100;
     const label = n > 0 ? '<span class="n">' + n + '</span>' : '';
     return '<div class="hbar ' + BINS[i].color + '" style="height:' + heightPct + '%">' + label + '</div>';
   }).join('');
+  /* 10th: ★ bar */
+  const starPct = (stats.starCount / maxCount) * 100;
+  const starLabel = stats.starCount > 0 ? '<span class="n">' + stats.starCount + '</span>' : '';
+  html += '<div class="hbar star" style="height:' + starPct + '%">' + starLabel + '</div>';
+  hist.innerHTML = html;
 }
 
 function renderControls() {
   const primary = document.getElementById('primaryBtn');
   const pauseBtn = document.getElementById('pauseBtn');
+  const starBtn = document.getElementById('starBtn');
   const activeName = m().players[m().activeIdx].name;
   const shortName = activeName.length > 12 ? activeName.slice(0, 11) + '…' : activeName;
 
@@ -1402,6 +1540,14 @@ function renderControls() {
     pauseBtn.classList.remove('pause-active');
     pauseBtn.textContent = 'Pause';
   }
+
+  /* Star button — only enabled while a shot is currently in flight
+     (running OR paused; both states allow toggling). Visual reflects
+     whether the current shot is starred. */
+  const inFlight = !!m().currentShot;
+  starBtn.disabled = !inFlight;
+  if (inFlight && m().currentShot.starred) starBtn.classList.add('starred');
+  else                                     starBtn.classList.remove('starred');
 }
 
 /* ────── History modal ────── */
@@ -1414,40 +1560,160 @@ function renderHistoryModal() {
       : state.history.map(h => {
         const expanded = _historyExpanded.has(h.id);
         const p0 = h.players[0], p1 = h.players[1];
-        const a0 = avgForArchivedPlayer(h, 0), a1 = avgForArchivedPlayer(h, 1);
+        const s0 = avgForArchivedPlayer(h, 0), s1 = avgForArchivedPlayer(h, 1);
         const dur = h.endedAt && h.startedAt
           ? fmtMatchDuration(h.endedAt - h.startedAt) : '—';
+        /* 0.7: match name + optional match#/table# in the heading.
+           Falls back to "Player A vs Player B" when name is empty. */
+        const headTitle = h.match_name && h.match_name.trim()
+          ? escHtml(h.match_name)
+          : escHtml(p0.name) + ' vs ' + escHtml(p1.name);
+        const metaBits = [];
+        if (h.match_number) metaBits.push('Match ' + escHtml(h.match_number));
+        if (h.table_number) metaBits.push('Tbl ' + escHtml(h.table_number));
+        const metaSuffix = metaBits.length ? ' · ' + metaBits.join(' · ') : '';
         const shotsHtml = (shots, name) =>
           '<div><div style="font-weight:700;color:var(--spm-accent);font-size:0.82rem;margin-bottom:4px">' +
             escHtml(name) + '</div>' +
             (shots.length
               ? '<ul>' + shots.map((s, i) =>
                   '<li><span class="shot-idx">#' + (i + 1) + '</span>' +
-                  '<span class="shot-time ' + colorForSec(s.ms / 1000) + '">' + fmtSec(s.ms) + '</span></li>'
+                  '<span class="shot-time ' + colorForSec(s.ms / 1000) + '">' + fmtSec(s.ms) +
+                  (s.starred ? ' <span style="color:var(--warn)">★</span>' : '') + '</span></li>'
                 ).join('') + '</ul>'
               : '<div style="color:var(--muted);font-size:0.78rem;font-style:italic">No shots</div>') +
           '</div>';
+        const renderAvgs = (s) => s.totalCount === 0
+          ? 'no shots'
+          : s.totalCount + ' shots · avg ' + (s.overall == null ? '—' : fmtSec(s.overall)) +
+            (s.starCount ? ' · ★ ' + s.starCount + (s.star != null ? ' avg ' + fmtSec(s.star) : '') : '') +
+            (s.plain != null && s.starCount ? ' · plain ' + fmtSec(s.plain) : '');
         return '<div class="history-item' + (expanded ? ' expanded' : '') + '" data-mid="' + h.id + '">' +
           '<div class="history-item-head" data-toggle="' + h.id + '">' +
             '<div>' +
-              '<div style="font-weight:700">' + escHtml(p0.name) + ' vs ' + escHtml(p1.name) + '</div>' +
-              '<div class="history-when">' + fmtDateTime(h.endedAt || h.startedAt) + ' · ' + dur + '</div>' +
+              '<div style="font-weight:700">' + headTitle + '</div>' +
+              '<div class="history-when">' + fmtDateTime(h.endedAt || h.startedAt) + ' · ' + dur + metaSuffix + '</div>' +
             '</div>' +
             '<div style="font-size:1.1rem;color:var(--muted)">' + (expanded ? '▾' : '▸') + '</div>' +
           '</div>' +
           '<div class="history-summary">' +
-            '<div class="p"><strong>' + escHtml(p0.name) + '</strong>' +
-              p0.shots.length + ' shots · avg ' + (a0 == null ? '—' : fmtSec(a0)) + '</div>' +
-            '<div class="p"><strong>' + escHtml(p1.name) + '</strong>' +
-              p1.shots.length + ' shots · avg ' + (a1 == null ? '—' : fmtSec(a1)) + '</div>' +
+            '<div class="p"><strong>' + escHtml(p0.name) + '</strong>' + renderAvgs(s0) + '</div>' +
+            '<div class="p"><strong>' + escHtml(p1.name) + '</strong>' + renderAvgs(s1) + '</div>' +
           '</div>' +
           '<div class="history-details">' +
             '<div class="history-shots">' + shotsHtml(p0.shots, p0.name) + shotsHtml(p1.shots, p1.name) + '</div>' +
-            '<button class="history-delete" data-del="' + h.id + '">Delete this match</button>' +
+            '<div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">' +
+              '<button class="history-share" data-share="' + h.id + '">📧 Share via email</button>' +
+              '<button class="history-delete" data-del="' + h.id + '">Delete this match</button>' +
+            '</div>' +
           '</div>' +
         '</div>';
       }).join('');
 }
+
+/* ────── Share — generate HTML email body for a match ──────
+   Per the v0.7 design: HTML email only. Two paths:
+     1. "Copy HTML" — clipboard with text/html MIME so paste-into-Gmail
+        renders formatted.
+     2. "Open in email" — mailto: with plain-text fallback body + subject.
+        Most clients drop HTML in mailto bodies; we provide both. */
+function buildShareSubject(h) {
+  const head = h.match_name && h.match_name.trim()
+    ? h.match_name
+    : h.players[0].name + ' vs ' + h.players[1].name;
+  const bits = [head];
+  if (h.match_number) bits.push('M' + h.match_number);
+  if (h.table_number) bits.push('T' + h.table_number);
+  return 'ShotClock — ' + bits.join(' · ');
+}
+function buildShareHtml(h) {
+  const s0 = avgForArchivedPlayer(h, 0), s1 = avgForArchivedPlayer(h, 1);
+  const p0 = h.players[0], p1 = h.players[1];
+  const fmtAvg = a => a == null ? '—' : fmtSec(a);
+  const dur = h.endedAt && h.startedAt
+    ? fmtMatchDuration(h.endedAt - h.startedAt) : '—';
+  const head = h.match_name && h.match_name.trim()
+    ? h.match_name
+    : p0.name + ' vs ' + p1.name;
+  const metaBits = [];
+  if (h.match_number) metaBits.push('Match ' + h.match_number);
+  if (h.table_number) metaBits.push('Table ' + h.table_number);
+  metaBits.push('Duration ' + dur);
+  metaBits.push(fmtDateTime(h.endedAt || h.startedAt));
+  const playerCol = (p, s) =>
+    '<td style="vertical-align:top;padding:8px 12px;border:1px solid #e5e7eb">' +
+      '<div style="font-weight:700;color:#0031a1;font-size:14px">' + escHtml(p.name) + '</div>' +
+      '<table style="border-collapse:collapse;margin-top:6px;font-size:12px">' +
+        '<tr><td>Shots</td><td style="padding-left:12px;font-weight:700">' + s.totalCount + '</td></tr>' +
+        '<tr><td>★ Stars</td><td style="padding-left:12px;font-weight:700;color:#f59e0b">' + s.starCount + '</td></tr>' +
+        '<tr><td>Avg (overall)</td><td style="padding-left:12px;font-weight:700">' + fmtAvg(s.overall) + '</td></tr>' +
+        '<tr><td>★ Avg</td><td style="padding-left:12px;font-weight:700">' + fmtAvg(s.star) + '</td></tr>' +
+        '<tr><td>Plain Avg</td><td style="padding-left:12px;font-weight:700">' + fmtAvg(s.plain) + '</td></tr>' +
+      '</table>' +
+      '<div style="margin-top:8px;font-size:11px;color:#6b7280">All shots:</div>' +
+      '<ol style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;color:#1a1a1a;margin:4px 0 0;padding-left:22px">' +
+        p.shots.map(sh => '<li>' + fmtSec(sh.ms) + (sh.starred ? ' <span style="color:#f59e0b">★</span>' : '') + '</li>').join('') +
+      '</ol>' +
+    '</td>';
+  return '<div style="font-family:system-ui,-apple-system,Arial,sans-serif;color:#1a1a1a;max-width:680px">' +
+    '<h2 style="color:#0031a1;margin:0 0 4px;font-size:18px">' + escHtml(head) + '</h2>' +
+    '<div style="color:#6b7280;font-size:12px;margin-bottom:14px">' + escHtml(metaBits.join(' · ')) + '</div>' +
+    '<table style="border-collapse:collapse;width:100%"><tr>' + playerCol(p0, s0) + playerCol(p1, s1) + '</tr></table>' +
+    '<div style="color:#6b7280;font-size:10px;margin-top:14px">Generated by ShotClock · ' + escHtml(fmtDateTime(Date.now())) + '</div>' +
+  '</div>';
+}
+function buildSharePlainText(h) {
+  /* Plain-text fallback used in mailto: body since most mail clients
+     ignore HTML in mailto. The HTML version is on the clipboard. */
+  const s0 = avgForArchivedPlayer(h, 0), s1 = avgForArchivedPlayer(h, 1);
+  const p0 = h.players[0], p1 = h.players[1];
+  const f = a => a == null ? '—' : fmtSec(a);
+  const head = h.match_name && h.match_name.trim() ? h.match_name : p0.name + ' vs ' + p1.name;
+  const lines = [head, fmtDateTime(h.endedAt || h.startedAt)];
+  if (h.match_number) lines.push('Match: ' + h.match_number);
+  if (h.table_number) lines.push('Table: ' + h.table_number);
+  lines.push('');
+  [[p0, s0], [p1, s1]].forEach(([p, s]) => {
+    lines.push(p.name);
+    lines.push('  Shots: ' + s.totalCount + '   ★ ' + s.starCount);
+    lines.push('  Avg: ' + f(s.overall) + '   ★ Avg: ' + f(s.star) + '   Plain Avg: ' + f(s.plain));
+    lines.push('');
+  });
+  lines.push('— ShotClock');
+  return lines.join('\n');
+}
+async function shareMatchHtml(matchId) {
+  const h = state.history.find(x => x.id === matchId);
+  if (!h) return;
+  const html = buildShareHtml(h);
+  const text = buildSharePlainText(h);
+  const subject = buildShareSubject(h);
+  /* 1. Try Clipboard API with text/html for paste-into-Gmail. */
+  let copied = false;
+  try {
+    if (navigator.clipboard && window.ClipboardItem) {
+      await navigator.clipboard.write([new ClipboardItem({
+        'text/html':  new Blob([html], { type: 'text/html'  }),
+        'text/plain': new Blob([text], { type: 'text/plain' })
+      })]);
+      copied = true;
+    }
+  } catch (_) {}
+  if (!copied) {
+    /* Plain-text fallback */
+    try { await navigator.clipboard.writeText(text); copied = true; } catch (_) {}
+  }
+  /* 2. Open the user's email composer with subject + plain body. The
+     HTML lives on the clipboard for the user to paste in. */
+  const mailto = 'mailto:?subject=' + encodeURIComponent(subject) +
+                 '&body=' + encodeURIComponent(text);
+  window.location.href = mailto;
+  /* User-visible cue — alert is annoying but it's a one-liner. */
+  if (copied) {
+    setTimeout(() => alert('HTML version copied to clipboard.\nIn your email composer: tap and hold the body → Paste to use the formatted version. Or just send the plain-text version that\'s already filled in.'), 50);
+  }
+}
+window.shareMatchHtml = shareMatchHtml;
 function fmtMatchDuration(ms) {
   const s = Math.floor(ms / 1000);
   const mins = Math.floor(s / 60);
@@ -1467,6 +1733,14 @@ function render() {
   document.getElementById('vBadge').textContent = APP_VERSION;
   document.getElementById('matchElapsed').textContent = 'Match: ' + fmtMatchElapsed();
   document.getElementById('historyCount').textContent = state.history.length;
+  /* 0.7: hydrate match-meta inputs without clobbering caret during typing.
+     Only update if the bound value differs from the displayed one. */
+  const mn = document.getElementById('matchName');
+  const mNum = document.getElementById('matchNumber');
+  const tNum = document.getElementById('tableNumber');
+  if (mn   && document.activeElement !== mn   && mn.value   !== (m().match_name   || '')) mn.value   = m().match_name   || '';
+  if (mNum && document.activeElement !== mNum && mNum.value !== (m().match_number || '')) mNum.value = m().match_number || '';
+  if (tNum && document.activeElement !== tNum && tNum.value !== (m().table_number || '')) tNum.value = m().table_number || '';
   renderPlayer(0);
   renderPlayer(1);
   renderControls();
@@ -1694,6 +1968,26 @@ document.getElementById('pauseBtn').addEventListener('click', togglePause);
 document.getElementById('turnoverBtn').addEventListener('click', () => { turnOver(); maybeReload(); });
 document.getElementById('newMatchBtn').addEventListener('click', () => { newMatch(); maybeReload(); });
 document.getElementById('resetBtn').addEventListener('click', () => { resetForNewPlayers(); maybeReload(); });
+/* 0.7: star toggle — only effective while a shot is in flight (button
+   has disabled attribute set by renderControls otherwise). */
+document.getElementById('starBtn').addEventListener('click', () => {
+  haptic();
+  toggleStar();
+});
+
+/* 0.7: match-name / match# / table# — bind to state.current. */
+document.getElementById('matchName').addEventListener('input', e => {
+  m().match_name = e.target.value;
+  saveState();
+});
+document.getElementById('matchNumber').addEventListener('input', e => {
+  m().match_number = e.target.value;
+  saveState();
+});
+document.getElementById('tableNumber').addEventListener('input', e => {
+  m().table_number = e.target.value;
+  saveState();
+});
 
 /* Install button + modal */
 document.getElementById('installBtn').addEventListener('click', openInstallModal);
@@ -1746,6 +2040,8 @@ document.getElementById('historyModal').addEventListener('click', e => {
     renderHistoryModal();
   } else if (e.target.dataset.del) {
     deleteHistoryItem(e.target.dataset.del);
+  } else if (e.target.dataset.share) {
+    shareMatchHtml(e.target.dataset.share);
   }
 });
 
