@@ -867,7 +867,7 @@
       <input type="text" id="matchNumber" class="meta-input meta-narrow" placeholder="Match #" maxlength="10" autocomplete="off">
       <input type="text" id="tableNumber" class="meta-input meta-narrow" placeholder="Tbl #"   maxlength="6"  autocomplete="off">
     </div>
-    <div class="v-badge">v<span id="vBadge">0.8</span></div>
+    <div class="v-badge">v<span id="vBadge">0.81</span></div>
   </div>
   <div class="top-bar-right">
     <button id="installBtn" title="Install to home screen" hidden>⊕ Install</button>
@@ -1176,7 +1176,7 @@ window.addEventListener('DOMContentLoaded', () => {
    ──────────────────────────────────────────────────────────────────── */
 const APP_NAME = 'ShotClock';
 
-const APP_VERSION = window.APP_VERSION || '0.8';
+const APP_VERSION = window.APP_VERSION || '0.81';
 const STORAGE_KEY = 'shotclock_state_v2';
 const STORAGE_KEY_V1 = 'shotclock_state_v1';  /* for migration */
 const TICK_MS = 100;  /* live-counter refresh */
@@ -1863,10 +1863,15 @@ function render() {
 /* ────── Live-tick (updates the running shot's displayed elapsed time) ────── */
 setInterval(() => {
   if (shotRunning()) {
-    /* Only re-render the live-row + match elapsed — avoid full DOM rebuild for perf */
+    /* Only re-render the live-row + match elapsed — avoid full DOM rebuild for perf.
+       0.8 fix: append ★ when the current shot is starred (Difficult Shot
+       pressed). Previously this tick clobbered the star marker every ~100ms,
+       so the icon flickered visible then disappeared until the next full
+       render. Match the format used by the full render at renderPlayer(). */
     const pidx = m().currentShot.playerIdx;
     const live = document.getElementById('live' + pidx);
-    live.textContent = fmtLive(currentShotElapsedMs());
+    const starMark = m().currentShot.starred ? ' ★' : '';
+    live.textContent = fmtLive(currentShotElapsedMs()) + starMark;
   }
   document.getElementById('matchElapsed').textContent = 'Match: ' + fmtMatchElapsed();
 }, TICK_MS);
