@@ -1,0 +1,499 @@
+<!doctype html>
+<!-- ════════════════════════════════════════════════════════════════════════
+     ShotClock — match-results share page (standalone)
+
+     Lives at /shotclock/r/. Standalone by design:
+       • Reads match data from the URL hash (`#d=<base64url>`). The hash
+         never reaches the server (browser-spec; not in HTTP request, not
+         in access logs, not in Referer headers).
+       • No DB, no service worker, no localStorage, no analytics.
+       • Pure static HTML/CSS/JS — works offline once the page loads.
+     This is the pattern used by Excalidraw, TLDraw, and Mermaid Live
+     Editor as of 2026 for shareable artifacts that must remain
+     server-independent.
+
+     Why hash, not query string:
+       • Query strings (?d=...) ARE sent to the server in every request
+         and land in access logs + Referer headers. Match data is private.
+       • Hash fragments (#d=...) are client-only — never transmitted.
+     Same reason web-app "share my X" links use #-encoded data.
+
+     UI/UX matches the live ShotClock app:
+       • SPM gradient header (red→navy)
+       • Same color palette: --spm-primary #ea002a, --spm-accent #0031a1
+       • Same histogram (9 time bins + ★ bar)
+       • Same fonts/spacing/border-radius
+     Plus print-friendly typography (read on phone, print to PDF, paste
+     into a screenshot — all should look good).
+
+     Open Graph tags use a generic title/image (scrapers don't run JS
+     to extract hash data, so per-link previews aren't possible without
+     a backend). The recipient gets the actual data once they open the
+     link.
+     ════════════════════════════════════════════════════════════════════════ -->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Match Results · ShotClock</title>
+<link rel="icon" type="image/svg+xml" href="../icon.svg">
+
+<!-- Open Graph / Twitter Card — generic preview when link is pasted in
+     chat apps. Per-match previews would require a backend; we don't have
+     one, by design. -->
+<meta property="og:title" content="ShotClock — Match Results">
+<meta property="og:description" content="Pool match results: shot times, averages, and difficult-shot tracking.">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary">
+<meta name="theme-color" content="#0031a1">
+
+<style>
+  :root {
+    --spm-primary: #ea002a;
+    --spm-accent:  #0031a1;
+    --bg:          #f3f3f3;
+    --card:        #ffffff;
+    --text:        #1a1a1a;
+    --muted:       #6b7280;
+    --border:      #e5e7eb;
+    --success:     #16a34a;
+    --warn:        #f59e0b;
+    --danger:      #ea002a;
+    --radius:      14px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    font-family: system-ui, -apple-system, sans-serif;
+    background: var(--bg); color: var(--text);
+    -webkit-tap-highlight-color: transparent;
+    line-height: 1.45;
+  }
+  body { min-height: 100dvh; padding: 0 0 40px; }
+
+  /* ── Hero header — same gradient as the live app ───────────────── */
+  .header {
+    background: linear-gradient(135deg, var(--spm-primary), var(--spm-accent));
+    color: #fff;
+    padding: calc(20px + env(safe-area-inset-top)) 16px 24px;
+    text-align: center;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+  }
+  .header h1 {
+    font-size: 1.35rem; font-weight: 800; letter-spacing: 0.3px;
+    word-break: break-word;
+  }
+  .header .sub {
+    font-size: 0.82rem; opacity: 0.92; margin-top: 6px; font-weight: 500;
+  }
+  .header .meta-chips {
+    display: inline-flex; flex-wrap: wrap; gap: 6px; justify-content: center;
+    margin-top: 10px;
+  }
+  .header .chip {
+    background: rgba(255,255,255,0.18);
+    border: 1px solid rgba(255,255,255,0.32);
+    border-radius: 999px;
+    padding: 3px 10px;
+    font-size: 0.74rem;
+    font-weight: 600;
+    backdrop-filter: blur(4px);
+  }
+
+  /* ── Outer container — phone-first, capped on desktop ───────────── */
+  .wrap {
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 16px;
+  }
+
+  /* ── Player cards ───────────────────────────────────────────────── */
+  .players-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+  @media (max-width: 480px) {
+    .players-row { grid-template-columns: 1fr; }
+  }
+  .player-card {
+    background: var(--card);
+    border: 2px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px 14px 18px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+  }
+  .player-name {
+    color: var(--spm-accent);
+    font-size: 1.05rem;
+    font-weight: 800;
+    margin-bottom: 10px;
+    text-align: center;
+    word-break: break-word;
+  }
+  .stats-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 8px;
+    margin-bottom: 14px;
+  }
+  .stat {
+    background: var(--bg);
+    border-radius: 8px;
+    padding: 8px 6px;
+    text-align: center;
+  }
+  .stat .label {
+    font-size: 0.66rem;
+    font-weight: 700;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+  }
+  .stat .value {
+    font-size: 1.05rem;
+    font-weight: 800;
+    color: var(--text);
+    margin-top: 2px;
+    font-variant-numeric: tabular-nums;
+  }
+  .stat.star .value { color: var(--warn); }
+
+  /* ── Histogram (mirrors live app exactly) ─────────────────────── */
+  .histogram {
+    display: grid;
+    grid-template-columns: repeat(9, 1fr) 0.9fr;
+    align-items: end;
+    gap: 2px;
+    height: 80px;
+    margin-top: 4px;
+    padding-top: 14px;
+    border-top: 1px dashed var(--border);
+  }
+  .hbar {
+    background: var(--border);
+    border-radius: 3px 3px 0 0;
+    min-height: 2px;
+    position: relative;
+  }
+  .hbar.g { background: var(--success); }
+  .hbar.y { background: var(--warn); }
+  .hbar.r { background: var(--danger); }
+  .hbar.star {
+    background: var(--spm-accent);
+    border-left: 2px solid var(--border);
+    border-radius: 3px 3px 0 0;
+    margin-left: 4px;
+  }
+  .hbar .n {
+    position: absolute; top: -14px; left: 0; right: 0;
+    text-align: center; font-size: 0.62rem; font-weight: 700;
+    color: var(--text);
+  }
+  .hist-labels {
+    display: grid; grid-template-columns: repeat(9, 1fr) 0.9fr;
+    gap: 2px; margin-top: 4px;
+    font-size: 0.54rem; color: var(--muted);
+    text-align: center;
+  }
+  .hist-labels .star-label { color: var(--spm-accent); font-weight: 800; }
+
+  /* ── Shot list ──────────────────────────────────────────────────── */
+  .shots {
+    margin-top: 14px;
+    border-top: 1px dashed var(--border);
+    padding-top: 10px;
+  }
+  .shots-title {
+    font-size: 0.72rem;
+    color: var(--muted);
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    margin-bottom: 6px;
+  }
+  .shots ol {
+    list-style: decimal;
+    padding-left: 22px;
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+    font-size: 0.82rem;
+    line-height: 1.55;
+    color: var(--text);
+    columns: 2;
+    column-gap: 16px;
+  }
+  .shots li {
+    break-inside: avoid;
+    font-variant-numeric: tabular-nums;
+  }
+  .shots .starred {
+    color: var(--warn);
+    font-weight: 700;
+  }
+
+  /* ── Footer ─────────────────────────────────────────────────────── */
+  .footer {
+    margin-top: 24px;
+    text-align: center;
+    font-size: 0.74rem;
+    color: var(--muted);
+  }
+  .footer a {
+    color: var(--spm-accent);
+    text-decoration: none;
+    font-weight: 700;
+  }
+  .footer a:hover { text-decoration: underline; }
+
+  /* ── Empty / error state ────────────────────────────────────────── */
+  .empty {
+    text-align: center;
+    padding: 80px 20px;
+  }
+  .empty h2 {
+    font-size: 1.2rem;
+    color: var(--spm-accent);
+    margin-bottom: 10px;
+  }
+  .empty p {
+    color: var(--muted);
+    margin-bottom: 18px;
+  }
+  .empty a.cta {
+    display: inline-block;
+    background: var(--spm-accent);
+    color: #fff;
+    padding: 12px 24px;
+    border-radius: 10px;
+    text-decoration: none;
+    font-weight: 700;
+  }
+
+  /* ── Print-friendly ─────────────────────────────────────────────── */
+  @media print {
+    html, body { background: #fff; color: #000; }
+    .header { background: none !important; color: #000; box-shadow: none; }
+    .header .chip { background: #f0f0f0; color: #000; border-color: #ccc; }
+    .player-card { box-shadow: none; border-color: #ccc; }
+    .footer { display: none; }
+    a { color: #000; text-decoration: none; }
+    .shots ol { columns: 1; }   /* avoid awkward page breaks */
+  }
+</style>
+</head>
+<body>
+
+<div id="content">
+  <!-- Populated by render() below from the hash payload. -->
+</div>
+
+<script>
+/* ════════════════════════════════════════════════════════════════════════
+   Decode + render. All inputs come from `location.hash`.
+
+   Payload shape (compact keys to keep URLs short):
+     {
+       v: 1,                          // schema version
+       n: "match name",
+       mn: "match #",   tn: "table #",
+       s: 1717249200000,              // startedAt epoch ms
+       e: 1717252800000,              // endedAt
+       p: [
+         { n: "Player A",
+           h: [[12300, 1717249220000, 0], …] },   // [ms, endedAt, starred(0|1)]
+         { n: "Player B", h: [...] }
+       ]
+     }
+
+   Why compact: each character in the URL costs space. A 50-shot match
+   in this shape encodes to ~1.6 KB → ~2.2 KB base64 → fits in URL
+   easily (mobile browsers handle 80 KB+ URLs; the practical share-app
+   limit is much higher than our payload).
+   ════════════════════════════════════════════════════════════════════════ */
+const esc = (s) => String(s == null ? '' : s)
+  .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+  .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+
+/* base64url decode → UTF-8 string. Inverse of the encoder in the
+   ShotClock app. Restores +/= from -_. */
+function decodeHash() {
+  const m = location.hash.match(/[#&]d=([A-Za-z0-9\-_]+)/);
+  if (!m) return null;
+  try {
+    let b64 = m[1].replace(/-/g, '+').replace(/_/g, '/');
+    while (b64.length % 4) b64 += '=';
+    const bin = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    const json = new TextDecoder().decode(bytes);
+    return JSON.parse(json);
+  } catch (e) {
+    console.error('hash decode failed:', e);
+    return null;
+  }
+}
+
+/* Time bins identical to the live app — same boundaries, same colors. */
+const BINS = [
+  { lo: 0,  hi: 5,         label: '0-5',   color: 'g' },
+  { lo: 5,  hi: 10,        label: '5-10',  color: 'g' },
+  { lo: 10, hi: 15,        label: '10-15', color: 'g' },
+  { lo: 15, hi: 20,        label: '15-20', color: 'g' },
+  { lo: 20, hi: 25,        label: '20-25', color: 'y' },
+  { lo: 25, hi: 30,        label: '25-30', color: 'y' },
+  { lo: 30, hi: 45,        label: '30-45', color: 'r' },
+  { lo: 45, hi: 60,        label: '45-60', color: 'r' },
+  { lo: 60, hi: Infinity,  label: '60+',   color: 'r' },
+];
+function binIndexForSec(sec) {
+  for (let i = 0; i < BINS.length; i++) if (sec >= BINS[i].lo && sec < BINS[i].hi) return i;
+  return BINS.length - 1;
+}
+function fmtSec(ms) {
+  if (ms < 60000) return (ms / 1000).toFixed(1) + 's';
+  const s = Math.floor(ms / 1000);
+  return Math.floor(s / 60) + 'm ' + (s % 60) + 's';
+}
+function fmtDuration(ms) {
+  const s = Math.floor(ms / 1000);
+  const mins = Math.floor(s / 60);
+  const h = Math.floor(mins / 60);
+  if (h > 0) return h + 'h ' + (mins % 60) + 'm';
+  return mins + 'm ' + (s % 60) + 's';
+}
+function fmtDateTime(epoch) {
+  if (!epoch) return '';
+  return new Date(epoch).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+}
+
+function statsForShots(shots) {
+  const n = shots.length;
+  if (!n) return { overall: null, star: null, plain: null, starCount: 0, totalCount: 0 };
+  let sum = 0, starSum = 0, plainSum = 0, starN = 0, plainN = 0;
+  for (const s of shots) {
+    sum += s.ms;
+    if (s.starred) { starSum += s.ms; starN++; }
+    else           { plainSum += s.ms; plainN++; }
+  }
+  return {
+    overall: sum / n,
+    star:   starN  ? starSum  / starN  : null,
+    plain:  plainN ? plainSum / plainN : null,
+    starCount: starN,
+    totalCount: n
+  };
+}
+
+function renderEmpty() {
+  document.getElementById('content').innerHTML =
+    '<div class="header"><h1>ShotClock</h1><div class="sub">Match results</div></div>' +
+    '<div class="wrap"><div class="empty">' +
+      '<h2>No match data in this link</h2>' +
+      '<p>This share link is missing or malformed.</p>' +
+      '<a class="cta" href="../">Open ShotClock</a>' +
+    '</div></div>';
+}
+
+function renderPlayer(player, shots) {
+  const stats = statsForShots(shots);
+  /* Time-bin counts (excluding starred — same convention as live app) */
+  const counts = new Array(BINS.length).fill(0);
+  for (const sh of shots) {
+    if (sh.starred) continue;
+    counts[binIndexForSec(sh.ms / 1000)]++;
+  }
+  const maxCount = Math.max(1, ...counts, stats.starCount);
+  const histBars = counts.map((n, i) => {
+    const hPct = (n / maxCount) * 100;
+    return '<div class="hbar ' + BINS[i].color + '" style="height:' + hPct + '%">' +
+           (n > 0 ? '<span class="n">' + n + '</span>' : '') + '</div>';
+  }).join('') +
+  '<div class="hbar star" style="height:' + ((stats.starCount / maxCount) * 100) + '%">' +
+    (stats.starCount > 0 ? '<span class="n">' + stats.starCount + '</span>' : '') + '</div>';
+
+  const fmt = (a) => a == null ? '—' : fmtSec(a);
+
+  /* Shot list — preserve insertion order (chronological) so the recipient
+     can correlate with their memory of the match. */
+  const shotList = shots.length
+    ? '<ol>' + shots.map(sh =>
+        '<li' + (sh.starred ? ' class="starred"' : '') + '>' +
+          fmtSec(sh.ms) + (sh.starred ? ' ★' : '') +
+        '</li>'
+      ).join('') + '</ol>'
+    : '<p style="color:var(--muted);font-style:italic;font-size:0.84rem">No shots recorded.</p>';
+
+  return '' +
+    '<div class="player-card">' +
+      '<div class="player-name">' + esc(player.n || 'Player') + '</div>' +
+      '<div class="stats-grid">' +
+        '<div class="stat"><div class="label">Shots</div><div class="value">' + stats.totalCount + '</div></div>' +
+        '<div class="stat"><div class="label">Avg</div><div class="value">' + fmt(stats.overall) + '</div></div>' +
+        '<div class="stat star"><div class="label">★ Diff</div><div class="value">' + stats.starCount + '</div></div>' +
+      '</div>' +
+      '<div class="stats-grid">' +
+        '<div class="stat"><div class="label">Plain Avg</div><div class="value">' + fmt(stats.plain) + '</div></div>' +
+        '<div class="stat star"><div class="label">★ Avg</div><div class="value">' + fmt(stats.star) + '</div></div>' +
+        '<div class="stat"><div class="label">Match #</div><div class="value" style="font-size:0.74rem;color:var(--muted)">—</div></div>' +
+      '</div>' +
+      '<div class="histogram">' + histBars + '</div>' +
+      '<div class="hist-labels">' +
+        BINS.map(b => '<span>' + b.label + '</span>').join('') +
+        '<span class="star-label">★</span>' +
+      '</div>' +
+      '<div class="shots">' +
+        '<div class="shots-title">All shots (' + shots.length + ')</div>' +
+        shotList +
+      '</div>' +
+    '</div>';
+}
+
+function render(payload) {
+  /* Decompress compact shot arrays back to objects. */
+  const playersOut = (payload.p || []).map(p => ({
+    n: p.n,
+    shots: (p.h || []).map(t => ({ ms: t[0], endedAt: t[1], starred: !!t[2] }))
+  }));
+
+  const headTitle = (payload.n && payload.n.trim())
+    ? payload.n
+    : (playersOut[0]?.n || 'Player A') + ' vs ' + (playersOut[1]?.n || 'Player B');
+
+  const chips = [];
+  if (payload.mn) chips.push('Match ' + esc(payload.mn));
+  if (payload.tn) chips.push('Table ' + esc(payload.tn));
+  if (payload.s && payload.e) chips.push('Duration ' + esc(fmtDuration(payload.e - payload.s)));
+  if (payload.e || payload.s) chips.push(esc(fmtDateTime(payload.e || payload.s)));
+
+  document.getElementById('content').innerHTML =
+    '<div class="header">' +
+      '<h1>' + esc(headTitle) + '</h1>' +
+      '<div class="sub">Match results</div>' +
+      (chips.length ? '<div class="meta-chips">' + chips.map(c => '<span class="chip">' + c + '</span>').join('') + '</div>' : '') +
+    '</div>' +
+    '<div class="wrap">' +
+      '<div class="players-row">' +
+        playersOut.map(p => renderPlayer(p, p.shots)).join('') +
+      '</div>' +
+      '<div class="footer">' +
+        'Generated by <a href="../">ShotClock</a> · ' +
+        'a South Portland Metro APA pace-of-play tool' +
+      '</div>' +
+    '</div>';
+
+  /* Sharpen tab title so it's useful in browser tab bar + history. */
+  document.title = headTitle + ' · ShotClock Results';
+}
+
+/* Boot — hashchange too, in case the URL is rewritten in-place. */
+const payload = decodeHash();
+if (payload) render(payload);
+else renderEmpty();
+window.addEventListener('hashchange', () => {
+  const p = decodeHash();
+  if (p) render(p);
+  else renderEmpty();
+});
+</script>
+
+</body>
+</html>

@@ -881,7 +881,7 @@
       <input type="text" id="matchNumber" class="meta-input meta-narrow" placeholder="Match #" maxlength="10" autocomplete="off">
       <input type="text" id="tableNumber" class="meta-input meta-narrow" placeholder="Tbl #"   maxlength="6"  autocomplete="off">
     </div>
-    <div class="v-badge">v<span id="vBadge">0.82</span></div>
+    <div class="v-badge">v<span id="vBadge">0.83</span></div>
   </div>
   <div class="top-bar-right">
     <button id="installBtn" title="Install to home screen" hidden>⊕ Install</button>
@@ -1195,7 +1195,7 @@ window.addEventListener('DOMContentLoaded', () => {
    ──────────────────────────────────────────────────────────────────── */
 const APP_NAME = 'ShotClock';
 
-const APP_VERSION = window.APP_VERSION || '0.82';
+const APP_VERSION = window.APP_VERSION || '0.83';
 const STORAGE_KEY = 'shotclock_state_v2';
 const STORAGE_KEY_V1 = 'shotclock_state_v1';  /* for migration */
 const TICK_MS = 100;  /* live-counter refresh */
@@ -1744,107 +1744,120 @@ function renderHistoryModal() {
       }).join('');
 }
 
-/* ────── Share — generate HTML email body for a match ──────
-   Per the v0.7 design: HTML email only. Two paths:
-     1. "Copy HTML" — clipboard with text/html MIME so paste-into-Gmail
-        renders formatted.
-     2. "Open in email" — mailto: with plain-text fallback body + subject.
-        Most clients drop HTML in mailto bodies; we provide both. */
-function buildShareSubject(h) {
-  const head = h.match_name && h.match_name.trim()
+/* ════════════════════════════════════════════════════════════════════════
+   Share — 0.83+: link to a standalone, hash-encoded static results page.
+
+   Pattern: payload (compact JSON) → UTF-8 bytes → base64url → location
+   hash on /r/. The hash is client-only — never transmitted to the server,
+   never logged. Same approach used by Excalidraw, TLDraw, Mermaid Live
+   Editor for "share a snapshot of this artifact without a backend."
+
+   No DB call, no email composer, no clipboard HTML. The user gets a
+   plain URL they can paste anywhere (chat, SMS, email). Recipients
+   open it and see a styled match-results page matching ShotClock UI.
+
+   navigator.share() (Web Share API, https://w3c.github.io/web-share/)
+   gives the native share sheet on mobile — text/SMS/Slack/etc as native
+   targets. Desktop browsers without share-API fall through to clipboard.
+
+   Why this is better than the email path it replaced:
+     • One URL, paste anywhere — no clipboard-vs-mail-composer dance.
+     • Recipient opens a page, doesn't need to render HTML mail.
+     • Print-friendly (Cmd-P on the static page produces a clean PDF).
+     • Survives forwarding (the URL is the whole artifact).
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* Where the share page lives. Resolved at runtime so /preprod/ or
+   localhost runs still produce working links (relative to current
+   origin + path). */
+function shareUrlBase() {
+  const u = new URL('./r/', location.href);
+  return u.toString();
+}
+
+/* Compact-key payload — short JSON keys to keep URLs reasonable for
+   long matches. Shots compress to [ms, endedAt, starred(0|1)] triples,
+   the smallest faithful representation. */
+function buildSharePayload(h) {
+  return {
+    v: 1,
+    n:  h.match_name   || '',
+    mn: h.match_number || '',
+    tn: h.table_number || '',
+    s:  h.startedAt || null,
+    e:  h.endedAt   || null,
+    p:  (h.players || []).map(p => ({
+      n: p.name || '',
+      h: (p.shots || []).map(sh => [sh.ms | 0, sh.endedAt || 0, sh.starred ? 1 : 0])
+    }))
+  };
+}
+
+/* UTF-8 → base64url. URL-safe: replaces +/= with -_ and strips padding.
+   atob/btoa only handle Latin-1; TextEncoder gives us correct UTF-8 for
+   non-ASCII player names ("Joaquín", "今井"). */
+function encodeShareData(payload) {
+  const bytes = new TextEncoder().encode(JSON.stringify(payload));
+  /* btoa needs a binary string. Build one char-by-char (Uint8Array spread
+     would blow the call-stack on large matches). */
+  let bin = '';
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function buildShareUrl(h) {
+  return shareUrlBase() + '#d=' + encodeShareData(buildSharePayload(h));
+}
+
+function buildShareTitle(h) {
+  if (h.match_name && h.match_name.trim()) return h.match_name + ' — ShotClock';
+  return (h.players[0]?.name || 'Player A') + ' vs ' +
+         (h.players[1]?.name || 'Player B') + ' — ShotClock';
+}
+
+function buildShareText(h) {
+  /* One-line summary for the message body. Recipient gets a tappable
+     URL plus context (since some apps hide bare URLs). */
+  const head = (h.match_name && h.match_name.trim())
     ? h.match_name
     : h.players[0].name + ' vs ' + h.players[1].name;
   const bits = [head];
-  if (h.match_number) bits.push('M' + h.match_number);
-  if (h.table_number) bits.push('T' + h.table_number);
-  return 'ShotClock — ' + bits.join(' · ');
+  if (h.match_number) bits.push('Match ' + h.match_number);
+  if (h.table_number) bits.push('Table ' + h.table_number);
+  return bits.join(' · ');
 }
-function buildShareHtml(h) {
-  const s0 = avgForArchivedPlayer(h, 0), s1 = avgForArchivedPlayer(h, 1);
-  const p0 = h.players[0], p1 = h.players[1];
-  const fmtAvg = a => a == null ? '—' : fmtSec(a);
-  const dur = h.endedAt && h.startedAt
-    ? fmtMatchDuration(h.endedAt - h.startedAt) : '—';
-  const head = h.match_name && h.match_name.trim()
-    ? h.match_name
-    : p0.name + ' vs ' + p1.name;
-  const metaBits = [];
-  if (h.match_number) metaBits.push('Match ' + h.match_number);
-  if (h.table_number) metaBits.push('Table ' + h.table_number);
-  metaBits.push('Duration ' + dur);
-  metaBits.push(fmtDateTime(h.endedAt || h.startedAt));
-  const playerCol = (p, s) =>
-    '<td style="vertical-align:top;padding:8px 12px;border:1px solid #e5e7eb">' +
-      '<div style="font-weight:700;color:#0031a1;font-size:14px">' + escHtml(p.name) + '</div>' +
-      '<table style="border-collapse:collapse;margin-top:6px;font-size:12px">' +
-        '<tr><td>Shots</td><td style="padding-left:12px;font-weight:700">' + s.totalCount + '</td></tr>' +
-        '<tr><td>★ Stars</td><td style="padding-left:12px;font-weight:700;color:#f59e0b">' + s.starCount + '</td></tr>' +
-        '<tr><td>Avg (overall)</td><td style="padding-left:12px;font-weight:700">' + fmtAvg(s.overall) + '</td></tr>' +
-        '<tr><td>★ Avg</td><td style="padding-left:12px;font-weight:700">' + fmtAvg(s.star) + '</td></tr>' +
-        '<tr><td>Plain Avg</td><td style="padding-left:12px;font-weight:700">' + fmtAvg(s.plain) + '</td></tr>' +
-      '</table>' +
-      '<div style="margin-top:8px;font-size:11px;color:#6b7280">All shots:</div>' +
-      '<ol style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;color:#1a1a1a;margin:4px 0 0;padding-left:22px">' +
-        p.shots.map(sh => '<li>' + fmtSec(sh.ms) + (sh.starred ? ' <span style="color:#f59e0b">★</span>' : '') + '</li>').join('') +
-      '</ol>' +
-    '</td>';
-  return '<div style="font-family:system-ui,-apple-system,Arial,sans-serif;color:#1a1a1a;max-width:680px">' +
-    '<h2 style="color:#0031a1;margin:0 0 4px;font-size:18px">' + escHtml(head) + '</h2>' +
-    '<div style="color:#6b7280;font-size:12px;margin-bottom:14px">' + escHtml(metaBits.join(' · ')) + '</div>' +
-    '<table style="border-collapse:collapse;width:100%"><tr>' + playerCol(p0, s0) + playerCol(p1, s1) + '</tr></table>' +
-    '<div style="color:#6b7280;font-size:10px;margin-top:14px">Generated by ShotClock · ' + escHtml(fmtDateTime(Date.now())) + '</div>' +
-  '</div>';
-}
-function buildSharePlainText(h) {
-  /* Plain-text fallback used in mailto: body since most mail clients
-     ignore HTML in mailto. The HTML version is on the clipboard. */
-  const s0 = avgForArchivedPlayer(h, 0), s1 = avgForArchivedPlayer(h, 1);
-  const p0 = h.players[0], p1 = h.players[1];
-  const f = a => a == null ? '—' : fmtSec(a);
-  const head = h.match_name && h.match_name.trim() ? h.match_name : p0.name + ' vs ' + p1.name;
-  const lines = [head, fmtDateTime(h.endedAt || h.startedAt)];
-  if (h.match_number) lines.push('Match: ' + h.match_number);
-  if (h.table_number) lines.push('Table: ' + h.table_number);
-  lines.push('');
-  [[p0, s0], [p1, s1]].forEach(([p, s]) => {
-    lines.push(p.name);
-    lines.push('  Shots: ' + s.totalCount + '   ★ ' + s.starCount);
-    lines.push('  Avg: ' + f(s.overall) + '   ★ Avg: ' + f(s.star) + '   Plain Avg: ' + f(s.plain));
-    lines.push('');
-  });
-  lines.push('— ShotClock');
-  return lines.join('\n');
-}
+
 async function shareMatchHtml(matchId) {
   const h = state.history.find(x => x.id === matchId);
   if (!h) return;
-  const html = buildShareHtml(h);
-  const text = buildSharePlainText(h);
-  const subject = buildShareSubject(h);
-  /* 1. Try Clipboard API with text/html for paste-into-Gmail. */
-  let copied = false;
-  try {
-    if (navigator.clipboard && window.ClipboardItem) {
-      await navigator.clipboard.write([new ClipboardItem({
-        'text/html':  new Blob([html], { type: 'text/html'  }),
-        'text/plain': new Blob([text], { type: 'text/plain' })
-      })]);
-      copied = true;
+  const url   = buildShareUrl(h);
+  const title = buildShareTitle(h);
+  const text  = buildShareText(h);
+
+  /* Path 1: Web Share API (modern mobile + macOS Safari + Edge). One tap →
+     native share sheet. Resolves only after the user picks (or cancels). */
+  if (navigator.share) {
+    try {
+      await navigator.share({ title, text, url });
+      return;
+    } catch (e) {
+      /* AbortError = user cancelled the sheet — silent. Any other failure
+         falls through to the clipboard path. */
+      if (e && e.name === 'AbortError') return;
     }
+  }
+
+  /* Path 2: clipboard. Most desktop browsers + share-API-disabled mobile
+     end up here. Copy the URL alone (cleanest paste target). */
+  try {
+    await navigator.clipboard.writeText(url);
+    alert('Link copied to clipboard:\n\n' + url + '\n\nPaste it into a message, email, or anywhere — the recipient gets a styled results page.');
+    return;
   } catch (_) {}
-  if (!copied) {
-    /* Plain-text fallback */
-    try { await navigator.clipboard.writeText(text); copied = true; } catch (_) {}
-  }
-  /* 2. Open the user's email composer with subject + plain body. The
-     HTML lives on the clipboard for the user to paste in. */
-  const mailto = 'mailto:?subject=' + encodeURIComponent(subject) +
-                 '&body=' + encodeURIComponent(text);
-  window.location.href = mailto;
-  /* User-visible cue — alert is annoying but it's a one-liner. */
-  if (copied) {
-    setTimeout(() => alert('HTML version copied to clipboard.\nIn your email composer: tap and hold the body → Paste to use the formatted version. Or just send the plain-text version that\'s already filled in.'), 50);
-  }
+
+  /* Path 3: prompt fallback (rare — iOS Safari private-browsing,
+     embedded webviews). User can long-press to copy. */
+  prompt('Share this match — copy the link:', url);
 }
 window.shareMatchHtml = shareMatchHtml;
 function fmtMatchDuration(ms) {

@@ -24,7 +24,7 @@
    compares the new SW against the cached one byte-for-byte). Without
    this, identical sw.js bytes = no perceived update.
    ════════════════════════════════════════════════════════════════════════ */
-const VERSION = '0.82';
+const VERSION = '0.83';
 const CACHE_NAME = 'shotclock-' + VERSION;
 const SHELL = [
   './',
@@ -32,6 +32,8 @@ const SHELL = [
   './version.js',
   './manifest.json',
   './icon.svg',
+  './r/',
+  './r/index.html',
 ];
 
 self.addEventListener('install', e => {
