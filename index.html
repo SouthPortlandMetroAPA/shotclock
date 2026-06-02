@@ -364,6 +364,20 @@
   }
   .ctrl-btn.star .star-icon { font-size: 1.25rem; line-height: 1; }
   .ctrl-btn.star .star-label-txt { font-size: 0.7rem; line-height: 1.05; font-weight: 700; letter-spacing: 0.2px; }
+  /* End Match — full-width row below shot controls. Red-tinted to convey
+     "this ends things". Hidden via [hidden] attr until status==='in_progress'. */
+  .ctrl-row.end-match-row {
+    grid-template-columns: 1fr;
+    margin-top: 6px;
+  }
+  .ctrl-btn.end-match {
+    background: var(--card);
+    color: var(--spm-primary, #b91c1c);
+    border: 1.5px solid var(--spm-primary, #b91c1c);
+    font-size: 0.95rem;
+    padding: 14px 8px;
+  }
+  .ctrl-btn.end-match:active { background: var(--spm-primary, #b91c1c); color: #fff; }
   .ctrl-btn.star[disabled] { opacity: 0.35; }
   .ctrl-btn.star.starred {
     background: var(--warn);
@@ -867,12 +881,11 @@
       <input type="text" id="matchNumber" class="meta-input meta-narrow" placeholder="Match #" maxlength="10" autocomplete="off">
       <input type="text" id="tableNumber" class="meta-input meta-narrow" placeholder="Tbl #"   maxlength="6"  autocomplete="off">
     </div>
-    <div class="v-badge">v<span id="vBadge">0.81</span></div>
+    <div class="v-badge">v<span id="vBadge">0.82</span></div>
   </div>
   <div class="top-bar-right">
     <button id="installBtn" title="Install to home screen" hidden>⊕ Install</button>
     <button id="historyBtn" title="View past matches">Hist (<span id="historyCount">0</span>)</button>
-    <button id="endMatchBtn" title="End match — archive to history, keep player names for next match" disabled>End Match</button>
     <button id="newMatchBtn" title="Reset shots but keep current player names">New</button>
     <button id="resetBtn" title="Archive current match and start fresh with new players">Reset</button>
   </div>
@@ -1090,6 +1103,12 @@
     <button class="ctrl-btn" id="turnoverBtn">Turn Over</button>
     <button class="ctrl-btn star" id="starBtn" disabled title="Mark current shot as a difficult shot (only during a running shot)"><span class="star-icon">★</span><span class="star-label-txt">Difficult<br>Shot</span></button>
   </div>
+  <!-- 0.82+: End Match button lives down here (symmetric with the
+       big Start Match affordance the primary button morphs into when
+       not_started). Hidden until status === 'in_progress'. -->
+  <div class="ctrl-row end-match-row" id="endMatchRow" hidden>
+    <button class="ctrl-btn end-match" id="endMatchBtn">End Match</button>
+  </div>
 </div>
 
 <script>
@@ -1176,7 +1195,7 @@ window.addEventListener('DOMContentLoaded', () => {
    ──────────────────────────────────────────────────────────────────── */
 const APP_NAME = 'ShotClock';
 
-const APP_VERSION = window.APP_VERSION || '0.81';
+const APP_VERSION = window.APP_VERSION || '0.82';
 const STORAGE_KEY = 'shotclock_state_v2';
 const STORAGE_KEY_V1 = 'shotclock_state_v1';  /* for migration */
 const TICK_MS = 100;  /* live-counter refresh */
@@ -1606,7 +1625,7 @@ function renderControls() {
   const pauseBtn = document.getElementById('pauseBtn');
   const starBtn = document.getElementById('starBtn');
   const turnoverBtn = document.getElementById('turnoverBtn');
-  const endMatchBtn = document.getElementById('endMatchBtn');
+  const endMatchRow = document.getElementById('endMatchRow');
   const activeName = m().players[m().activeIdx].name;
   const shortName = activeName.length > 12 ? activeName.slice(0, 11) + '…' : activeName;
 
@@ -1626,7 +1645,7 @@ function renderControls() {
     turnoverBtn.disabled = true;
     starBtn.disabled = true;
     starBtn.classList.remove('starred');
-    if (endMatchBtn) endMatchBtn.disabled = true;
+    if (endMatchRow) endMatchRow.hidden = true;
     return;
   }
 
@@ -1660,8 +1679,8 @@ function renderControls() {
   if (inFlight && m().currentShot.starred) starBtn.classList.add('starred');
   else                                     starBtn.classList.remove('starred');
 
-  /* End Match button — enabled whenever the match is in progress. */
-  if (endMatchBtn) endMatchBtn.disabled = false;
+  /* End Match row — visible whenever the match is in progress. */
+  if (endMatchRow) endMatchRow.hidden = false;
 }
 
 /* ────── History modal ────── */
