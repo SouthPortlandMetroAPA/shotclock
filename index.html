@@ -343,17 +343,27 @@
   }
   .ctrl-row {
     display: grid;
-    grid-template-columns: 1fr 1.4fr 1fr 0.6fr;  /* Pause | Start/Stop (wider) | Turn Over | ★ */
+    /* 0.8: widened the star column from 0.6fr → 0.9fr to fit the
+       "Difficult Shot" label. Other cols narrowed proportionally. */
+    grid-template-columns: 0.9fr 1.3fr 0.9fr 0.9fr;  /* Pause | Start/Stop (wider) | Turn Over | ★ Difficult Shot */
     gap: 6px;
   }
-  /* Star button — narrow, icon-only, slightly distinct */
+  /* Star button — stacked star icon + "Difficult Shot" label.
+     The icon is the visual anchor; the text clarifies meaning so first-
+     time users don't have to guess. Both lines centered, tight line-height. */
   .ctrl-btn.star {
-    padding: 16px 6px;
-    font-size: 1.3rem;
+    padding: 8px 4px;
     color: var(--muted);
     background: var(--card);
     border: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
   }
+  .ctrl-btn.star .star-icon { font-size: 1.25rem; line-height: 1; }
+  .ctrl-btn.star .star-label-txt { font-size: 0.7rem; line-height: 1.05; font-weight: 700; letter-spacing: 0.2px; }
   .ctrl-btn.star[disabled] { opacity: 0.35; }
   .ctrl-btn.star.starred {
     background: var(--warn);
@@ -857,11 +867,12 @@
       <input type="text" id="matchNumber" class="meta-input meta-narrow" placeholder="Match #" maxlength="10" autocomplete="off">
       <input type="text" id="tableNumber" class="meta-input meta-narrow" placeholder="Tbl #"   maxlength="6"  autocomplete="off">
     </div>
-    <div class="v-badge">v<span id="vBadge">0.7</span></div>
+    <div class="v-badge">v<span id="vBadge">0.8</span></div>
   </div>
   <div class="top-bar-right">
     <button id="installBtn" title="Install to home screen" hidden>⊕ Install</button>
     <button id="historyBtn" title="View past matches">Hist (<span id="historyCount">0</span>)</button>
+    <button id="endMatchBtn" title="End match — archive to history, keep player names for next match" disabled>End Match</button>
     <button id="newMatchBtn" title="Reset shots but keep current player names">New</button>
     <button id="resetBtn" title="Archive current match and start fresh with new players">Reset</button>
   </div>
@@ -1077,7 +1088,7 @@
     <button class="ctrl-btn" id="pauseBtn" disabled>Pause</button>
     <button class="ctrl-btn primary" id="primaryBtn">Start shot</button>
     <button class="ctrl-btn" id="turnoverBtn">Turn Over</button>
-    <button class="ctrl-btn star" id="starBtn" disabled title="Mark current shot as special (only during a running shot)">★</button>
+    <button class="ctrl-btn star" id="starBtn" disabled title="Mark current shot as a difficult shot (only during a running shot)"><span class="star-icon">★</span><span class="star-label-txt">Difficult<br>Shot</span></button>
   </div>
 </div>
 
@@ -1165,7 +1176,7 @@ window.addEventListener('DOMContentLoaded', () => {
    ──────────────────────────────────────────────────────────────────── */
 const APP_NAME = 'ShotClock';
 
-const APP_VERSION = window.APP_VERSION || '0.7';
+const APP_VERSION = window.APP_VERSION || '0.8';
 const STORAGE_KEY = 'shotclock_state_v2';
 const STORAGE_KEY_V1 = 'shotclock_state_v1';  /* for migration */
 const TICK_MS = 100;  /* live-counter refresh */
@@ -1210,6 +1221,19 @@ function m() { return state.current; }   /* current match alias */
 function newMatchObj() {
   return {
     id: 'm_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6),
+    /* 0.8: status is the source of truth for the match's lifecycle.
+         'not_started' — created but Start Match not pressed yet. Shot
+                         controls are GATED off (you can edit names + meta
+                         + start the match). startedAt is set provisionally
+                         on object creation but rewritten on Start Match
+                         so the timer starts from the press.
+         'in_progress' — Start Match pressed. Shot controls enabled.
+         'ended'       — match ended; this status only ever lives in
+                         history (archived matches), never in state.current.
+         End Match archives the in_progress match (sets endedAt + status
+         = 'ended' on the archived copy) and creates a fresh not_started
+         match preserving player names + match meta. */
+    status: 'not_started',
     startedAt: Date.now(),
     endedAt: null,
     /* 0.7+: per-match metadata. All optional. */
@@ -1240,6 +1264,21 @@ function loadState() {
         if (!Array.isArray(s.current.expanded) || s.current.expanded.length !== 2) {
           s.current.expanded = [false, false];
         }
+        /* 0.8 migration: matches without a `status` field. Infer from
+           shot data — if there's ANY shot recorded or a shot is mid-flight,
+           the match was effectively in progress; otherwise it was idle.
+           Same inference applied to archived history matches (treated as
+           'ended' since they're in history). Non-destructive: any future
+           version can re-derive these. */
+        if (!s.current.status) {
+          const hasAnyShot = (s.current.players[0]?.shots?.length || 0)
+                          + (s.current.players[1]?.shots?.length || 0)
+                          + (s.current.currentShot ? 1 : 0) > 0;
+          s.current.status = hasAnyShot ? 'in_progress' : 'not_started';
+        }
+        for (const h of s.history) {
+          if (!h.status) h.status = 'ended';
+        }
         return s;
       }
     }
@@ -1252,6 +1291,7 @@ function loadState() {
           schema_version: 2,
           current: {
             id: 'm_migrated_' + Date.now().toString(36),
+            status: 'in_progress',   /* 0.8: v1 always treated as in-progress */
             startedAt: s1.matchStartedAt || Date.now(),
             endedAt: null,
             players: s1.players || [
@@ -1353,14 +1393,57 @@ function undoLastShot(pidx) {
   saveState(); render();
 }
 
-/* "New Match" — start fresh shots for the SAME players. Same names kept. */
+/* 0.8: Start Match — flip status 'not_started' → 'in_progress' and rewrite
+   startedAt to the moment Start was pressed (the provisional value set at
+   match-object creation is overwritten). Idempotent if already started. */
+function startMatch() {
+  if (m().status === 'in_progress') return;
+  m().status = 'in_progress';
+  m().startedAt = Date.now();
+  saveState(); render();
+}
+
+/* 0.8: End Match — archive current to history, create a fresh
+   'not_started' match preserving player names + match metadata so the
+   next match starts with the same setup. If a shot is in flight it's
+   recorded first. Confirm prompt only if there's data to archive. */
+function endMatch() {
+  if (m().status !== 'in_progress') return;
+  const hasData = m().players[0].shots.length || m().players[1].shots.length || m().currentShot;
+  if (hasData && !confirm('End this match? It will be saved to history.')) return;
+  /* Record an in-flight shot before archiving so it doesn't get lost. */
+  if (m().currentShot) endShot();
+  const archived = JSON.parse(JSON.stringify(m()));
+  archived.endedAt = Date.now();
+  archived.status = 'ended';
+  state.history.unshift(archived);
+  /* Fresh not-started match — preserve names + match metadata. */
+  const carryNames = [m().players[0].name, m().players[1].name];
+  const carryMeta  = { match_name: m().match_name, match_number: m().match_number, table_number: m().table_number };
+  state.current = newMatchObj();
+  state.current.players[0].name = carryNames[0];
+  state.current.players[1].name = carryNames[1];
+  state.current.match_name   = carryMeta.match_name   || '';
+  state.current.match_number = carryMeta.match_number || '';
+  state.current.table_number = carryMeta.table_number || '';
+  saveState(); render();
+}
+
+/* "New Match" — start fresh shots for the SAME players. Same names kept.
+   0.8: also jumps directly to 'in_progress' (the user's intent is to
+   start playing immediately, not click Start again). */
 function newMatch() {
   const hasShots = m().players[0].shots.length || m().players[1].shots.length || m().currentShot;
   if (hasShots && !confirm('Start a new match? Current shots will be lost (not archived).')) return;
   const names = [m().players[0].name, m().players[1].name];
+  const carryMeta = { match_name: m().match_name, match_number: m().match_number, table_number: m().table_number };
   state.current = newMatchObj();
+  state.current.status = 'in_progress';
   state.current.players[0].name = names[0];
   state.current.players[1].name = names[1];
+  state.current.match_name   = carryMeta.match_name   || '';
+  state.current.match_number = carryMeta.match_number || '';
+  state.current.table_number = carryMeta.table_number || '';
   saveState(); render();
 }
 
@@ -1375,6 +1458,7 @@ function resetForNewPlayers() {
     if (m().currentShot) endShot();
     const archived = JSON.parse(JSON.stringify(m()));  /* deep clone */
     archived.endedAt = Date.now();
+    archived.status  = 'ended';   /* 0.8: stamp archived state */
     state.history.unshift(archived);  /* most recent first */
   } else {
     if (!confirm('Reset for new players?')) return;
@@ -1401,6 +1485,9 @@ function fmtLive(ms) {
   return (ms / 1000).toFixed(1);
 }
 function fmtMatchElapsed() {
+  /* 0.8: while the match hasn't started, the clock reads 0:00 instead of
+     counting from match-object creation (which is essentially app open). */
+  if ((m().status || 'in_progress') === 'not_started') return '0:00';
   const ms = Date.now() - m().startedAt;
   const s = Math.floor(ms / 1000);
   const mins = Math.floor(s / 60);
@@ -1518,9 +1605,32 @@ function renderControls() {
   const primary = document.getElementById('primaryBtn');
   const pauseBtn = document.getElementById('pauseBtn');
   const starBtn = document.getElementById('starBtn');
+  const turnoverBtn = document.getElementById('turnoverBtn');
+  const endMatchBtn = document.getElementById('endMatchBtn');
   const activeName = m().players[m().activeIdx].name;
   const shortName = activeName.length > 12 ? activeName.slice(0, 11) + '…' : activeName;
 
+  const status = m().status || 'in_progress';
+
+  /* 0.8: when match hasn't started, the primary button is the START
+     MATCH affordance — visually distinct (running green) so it draws
+     the eye. Other shot controls (Pause, Turn Over, Star) are disabled
+     until the match starts so the operator can't accidentally start
+     timing before everything's set up. */
+  if (status === 'not_started') {
+    primary.className = 'ctrl-btn primary running';
+    primary.innerHTML = 'Start Match<br><small style="font-weight:600;opacity:0.85;font-size:0.74rem">tap to begin</small>';
+    pauseBtn.disabled = true;
+    pauseBtn.classList.remove('pause-active');
+    pauseBtn.textContent = 'Pause';
+    turnoverBtn.disabled = true;
+    starBtn.disabled = true;
+    starBtn.classList.remove('starred');
+    if (endMatchBtn) endMatchBtn.disabled = true;
+    return;
+  }
+
+  /* status === 'in_progress' — existing shot-button lifecycle. */
   if (!m().currentShot) {
     primary.className = 'ctrl-btn primary';
     primary.innerHTML = 'Start shot<br><small style="font-weight:600;opacity:0.85;font-size:0.74rem">' + escHtml(shortName) + '</small>';
@@ -1540,6 +1650,7 @@ function renderControls() {
     pauseBtn.classList.remove('pause-active');
     pauseBtn.textContent = 'Pause';
   }
+  turnoverBtn.disabled = false;
 
   /* Star button — only enabled while a shot is currently in flight
      (running OR paused; both states allow toggling). Visual reflects
@@ -1548,6 +1659,9 @@ function renderControls() {
   starBtn.disabled = !inFlight;
   if (inFlight && m().currentShot.starred) starBtn.classList.add('starred');
   else                                     starBtn.classList.remove('starred');
+
+  /* End Match button — enabled whenever the match is in progress. */
+  if (endMatchBtn) endMatchBtn.disabled = false;
 }
 
 /* ────── History modal ────── */
@@ -1953,6 +2067,12 @@ setTimeout(maybeShowFirstTimeInstallPrompt, 60_000);  /* 60s engagement timer */
 
 document.getElementById('primaryBtn').addEventListener('click', () => {
   haptic();
+  /* 0.8: when match hasn't started, primary button = Start Match. */
+  if ((m().status || 'in_progress') === 'not_started') {
+    startMatch();
+    maybeReload();
+    return;
+  }
   const wasFirstShot = !m().players[0].shots.length && !m().players[1].shots.length;
   if (!m().currentShot) startShot();
   else if (shotPaused()) endShot();   /* end while paused — record current elapsed */
@@ -1966,6 +2086,7 @@ document.getElementById('primaryBtn').addEventListener('click', () => {
 });
 document.getElementById('pauseBtn').addEventListener('click', togglePause);
 document.getElementById('turnoverBtn').addEventListener('click', () => { turnOver(); maybeReload(); });
+document.getElementById('endMatchBtn').addEventListener('click', () => { endMatch(); maybeReload(); });
 document.getElementById('newMatchBtn').addEventListener('click', () => { newMatch(); maybeReload(); });
 document.getElementById('resetBtn').addEventListener('click', () => { resetForNewPlayers(); maybeReload(); });
 /* 0.7: star toggle — only effective while a shot is in flight (button
